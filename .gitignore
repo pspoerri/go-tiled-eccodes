@@ -1,0 +1,7 @@
+# Built CLI binaries
+/grib-inspect
+/grib-tile
+
+# OS / editor cruft
+.DS_Store
+*.swp

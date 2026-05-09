@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  linux:
+    name: Linux (CGO=${{ matrix.cgo }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ["0", "1"]
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install C dependencies
+        if: matrix.cgo == '1'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libaec-dev libopenjp2-7-dev libeccodes-dev pkg-config
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "::error::Files need gofmt:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./... -count=1
+
+      - name: go test (eccodes cross-validation)
+        if: matrix.cgo == '1'
+        run: go test -tags eccodes -count=1 ./eccodestest
+
+  macos:
+    name: macOS (CGO=1)
+    runs-on: macos-latest
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install C dependencies
+        run: brew install libaec openjpeg eccodes
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... -count=1
+
+      - name: go test (eccodes cross-validation)
+        run: go test -tags eccodes -count=1 ./eccodestest
