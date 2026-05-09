@@ -178,10 +178,10 @@ func BenchmarkUnstructuredTileSetRegionalCHFar(b *testing.B) {
 // pre-fix code; the per-pixel cost shape is unchanged.)
 func BenchmarkUnstructuredAutoLadderTileSet(b *testing.B) {
 	type rung struct {
-		name    string
-		n       int
+		name                       string
+		n                          int
 		latLo, latHi, lonLo, lonHi float64
-		maxNN   float64 // metres
+		maxNN                      float64 // metres
 	}
 	rungs := []rung{
 		{"iconch1", 100_000, 45.5, 47.8, 5.5, 10.5, 5_000},

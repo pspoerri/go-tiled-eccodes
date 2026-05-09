@@ -236,4 +236,3 @@ func TestUnstructuredBuildIndexErrorWithoutCoords(t *testing.T) {
 		t.Fatal("BuildIndex without coords should error")
 	}
 }
-
