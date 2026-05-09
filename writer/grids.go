@@ -160,8 +160,13 @@ func (g LatLon) EncodeTemplate() []byte {
 	t[40] = 0x30 // resolution flags: i and j increments are given
 	PutAngle(t[41:], g.La2)
 	PutAngle(t[45:], g.Lo2)
-	binary.BigEndian.PutUint32(t[49:], uint32(math.Round(g.Di*1e6)))
-	binary.BigEndian.PutUint32(t[53:], uint32(math.Round(g.Dj*1e6)))
+	// Di/Dj are encoded as unsigned uint32 micro-degrees (template 3.0). The
+	// natural scanning convention treats them as magnitudes with direction
+	// carried by the scan flags, so guard against accidental negatives here —
+	// uint32(neg-float) is implementation-defined and would silently corrupt
+	// the encoded grid.
+	binary.BigEndian.PutUint32(t[49:], uint32(math.Round(math.Abs(g.Di)*1e6)))
+	binary.BigEndian.PutUint32(t[53:], uint32(math.Round(math.Abs(g.Dj)*1e6)))
 	t[57] = g.Scan.Byte()
 	return t
 }
@@ -383,7 +388,9 @@ func (g Gaussian) EncodeTemplate() []byte {
 	t[40] = 0x30
 	PutAngle(t[41:], -approx)
 	PutAngle(t[45:], g.Lo2)
-	binary.BigEndian.PutUint32(t[49:], uint32(math.Round((g.Lo2-g.Lo1)/float64(g.Ni-1)*1e6)))
+	// Same unsigned-magnitude guard as LatLon — Di is encoded as uint32 even
+	// though the natural span (Lo2-Lo1) can be negative for unusual scans.
+	binary.BigEndian.PutUint32(t[49:], uint32(math.Round(math.Abs(g.Lo2-g.Lo1)/float64(g.Ni-1)*1e6)))
 	binary.BigEndian.PutUint32(t[53:], uint32(g.N))
 	t[57] = g.Scan.Byte()
 	return t
