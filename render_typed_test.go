@@ -32,17 +32,6 @@ func renderTestMessage(t *testing.T) (*grib.File, *grib.Message) {
 	return file, file.Messages()[0]
 }
 
-// regionRequest covers the 4° × 4° box centered on the synthetic field's
-// origin. Plate-Carrée sampling at the same density gives a 1:1 mapping
-// from output cell to source cell at the centre of the region.
-func regionRequest() grib.Region {
-	return grib.Region{
-		South: 0, West: 0, North: 4, East: 4,
-		Width: 4, Height: 4,
-		Sample: tile.Bicubic,
-	}
-}
-
 // TestRenderInt typed integer renderers go through the same float64 source
 // pipeline; the test fixture is a small region that sits inside the grid so
 // every output cell holds a finite value.

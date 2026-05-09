@@ -382,6 +382,9 @@ func renderInt[T signedInt](m *Message, req TileRequest, q tile.Quantize, dst []
 		lo, hi = float64(tmin), float64(tmax)
 	}
 	miss := T(q.MissingValue)
+	// float64 cannot exactly represent math.MaxInt64 / math.MinInt64; the
+	// nearest representable values are ±2^63, which overflow on int64 cast.
+	// Saturate at the type bounds before the conversion.
 	for i, v := range tmp {
 		if math.IsNaN(v) {
 			dst[i] = miss
@@ -392,6 +395,14 @@ func renderInt[T signedInt](m *Message, req TileRequest, q tile.Quantize, dst []
 			x = lo
 		} else if x > hi {
 			x = hi
+		}
+		if x >= float64(tmax) {
+			dst[i] = T(tmax)
+			continue
+		}
+		if x <= float64(tmin) {
+			dst[i] = T(tmin)
+			continue
 		}
 		dst[i] = T(int64(x))
 	}
@@ -414,6 +425,10 @@ func renderUint[T unsignedInt](m *Message, req TileRequest, q tile.Quantize, dst
 		hi = float64(tmax)
 	}
 	miss := T(q.MissingValue)
+	// float64 cannot exactly represent math.MaxUint64; rounding bumps it to
+	// 2^64, and uint64(2^64) is implementation-defined. Saturate at the type
+	// bound before the conversion, and at zero on the low side (uint cast of
+	// a negative float is also implementation-defined).
 	for i, v := range tmp {
 		if math.IsNaN(v) {
 			dst[i] = miss
@@ -424,6 +439,14 @@ func renderUint[T unsignedInt](m *Message, req TileRequest, q tile.Quantize, dst
 			x = lo
 		} else if x > hi {
 			x = hi
+		}
+		if x >= float64(tmax) {
+			dst[i] = T(tmax)
+			continue
+		}
+		if x <= 0 {
+			dst[i] = 0
+			continue
 		}
 		dst[i] = T(uint64(x))
 	}
