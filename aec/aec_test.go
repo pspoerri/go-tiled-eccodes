@@ -53,3 +53,32 @@ func TestDerivedParams(t *testing.T) {
 		}
 	}
 }
+
+func TestSETable(t *testing.T) {
+	tab := buildSETable()
+	if len(tab) != 2*(seTableSize+1) {
+		t.Fatalf("len = %d, want %d", len(tab), 2*(seTableSize+1))
+	}
+	// For every m, the decoded pair must invert the forward triangular map
+	// gamma = (d0+d1)(d0+d1+1)/2 + d1.
+	for m := 0; m <= seTableSize; m++ {
+		total := tab[2*m] // d0 + d1
+		ms := tab[2*m+1]  // row base = total*(total+1)/2
+		d1 := m - ms
+		d0 := total - d1
+		if d0 < 0 || d1 < 0 || d1 > total {
+			t.Fatalf("m=%d: bad pair d0=%d d1=%d total=%d", m, d0, d1, total)
+		}
+		gamma := (d0+d1)*(d0+d1+1)/2 + d1
+		if gamma != m {
+			t.Fatalf("m=%d: forward map gives %d (d0=%d d1=%d)", m, gamma, d0, d1)
+		}
+	}
+	// Spot-check the first rows: m=0 ->(0,0); m=1->total1 base1; m=2->total2 base3.
+	if tab[0] != 0 || tab[1] != 0 {
+		t.Fatalf("m=0 entry = (%d,%d) want (0,0)", tab[0], tab[1])
+	}
+	if tab[2*1] != 1 || tab[2*1+1] != 1 {
+		t.Fatalf("m=1 entry = (%d,%d) want (1,1)", tab[2], tab[3])
+	}
+}
