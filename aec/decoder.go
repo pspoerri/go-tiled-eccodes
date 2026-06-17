@@ -115,7 +115,80 @@ func (d *decoder) split(k, ref int) error {
 	return nil
 }
 
-func (d *decoder) lowEntropy(ref int) error { return ErrData }
+// lowEntropy handles id==0: read a 1-bit sub-id, then (if ref) the reference
+// sample, then dispatch to second extension (sub-id 1) or zero block (sub-id 0).
+// Mirrors m_low_entropy + m_low_entropy_ref.
+func (d *decoder) lowEntropy(ref int) error {
+	sub, ok := d.br.getBits(1)
+	if !ok {
+		return ErrShortInput
+	}
+	if ref == 1 {
+		v, ok := d.br.getBits(d.cfg.BitsPerSample)
+		if !ok {
+			return ErrShortInput
+		}
+		d.rsiBuf[d.rsip] = v
+		d.rsip++
+	}
+	if sub == 1 {
+		return d.secondExtension(ref)
+	}
+	return d.zeroBlock(ref)
+}
+
+// zeroBlock emits a run of zero samples. The FS value gives zero_blocks = fs+1
+// with the ROS (remainder-of-segment, value 5) special case. Mirrors m_zero_block.
+func (d *decoder) zeroBlock(ref int) error {
+	fs, ok := d.br.getFS()
+	if !ok {
+		return ErrShortInput
+	}
+	const ros = 5
+	zb := int(fs) + 1
+	switch {
+	case zb == ros:
+		b := d.rsip / d.blockSize // completed blocks in this RSI (ref slot already counted)
+		zb = min(d.rsi-b, 64-(b%64))
+	case zb > ros:
+		zb--
+	}
+	zeroSamples := zb*d.blockSize - ref
+	if zeroSamples < 0 || d.rsip+zeroSamples > d.rsiSize {
+		return ErrData
+	}
+	for i := 0; i < zeroSamples; i++ {
+		d.rsiBuf[d.rsip] = 0
+		d.rsip++
+	}
+	return nil
+}
+
+// secondExtension decodes block_size/2 gamma values into sample pairs via the
+// SE inverse table. The loop starts at i=ref so the reference sample (already
+// placed by lowEntropy) keeps the pair parity. Mirrors m_se.
+func (d *decoder) secondExtension(ref int) error {
+	i := ref
+	for i < d.blockSize {
+		m, ok := d.br.getFS()
+		if !ok {
+			return ErrShortInput
+		}
+		if m > seTableSize {
+			return ErrData
+		}
+		d1 := int32(m) - int32(d.seTable[2*m+1])
+		if i&1 == 0 {
+			d.rsiBuf[d.rsip] = uint32(int32(d.seTable[2*m]) - d1)
+			d.rsip++
+			i++
+		}
+		d.rsiBuf[d.rsip] = uint32(d1)
+		d.rsip++
+		i++
+	}
+	return nil
+}
 
 // flush reverses preprocessing (if enabled) over a full RSI buffer and
 // serializes the samples to dst. With whole-buffer decode, flush always starts
