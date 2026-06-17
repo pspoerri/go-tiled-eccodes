@@ -74,6 +74,7 @@ func newDecoder(dst, src []byte, cfg Config) (*decoder, error) {
 		pp:        cfg.Flags&DataPreprocess != 0,
 		signed:    cfg.Flags&DataSigned != 0,
 		msb:       cfg.Flags&DataMSB != 0,
+		padRSI:    cfg.Flags&PadRSI != 0,
 	}
 
 	switch {

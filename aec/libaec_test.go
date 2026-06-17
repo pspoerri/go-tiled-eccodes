@@ -96,6 +96,53 @@ func sweepVectors(t testing.TB) []vector {
 	add(vecName(bps, bs, rsi, fl, "lowvar"), bps, bs, rsi, fl, bs*rsi*2+5, func(i int) uint32 { return uint32(1000 + i%2) })
 	add(vecName(bps, bs, rsi, fl, "ramp"), bps, bs, rsi, fl, bs*rsi*2+5, func(i int) uint32 { return uint32(1000 + i) })
 	add(vecName(bps, bs, rsi, fl, "highentropy"), bps, bs, rsi, fl, bs*rsi*2+5, func(i int) uint32 { return uint32(rng.Intn(1 << 16)) })
+
+	// PadRSI vectors: 16-bit, representative block/rsi combos, with DataPreprocess|DataMSB|PadRSI.
+	// Uses rsi >= 2 so at least one full RSI boundary is exercised.
+	for _, bs2 := range []int{16, 32} {
+		for _, rsi2 := range []int{4, 8} {
+			padFlags := DataPreprocess | DataMSB | PadRSI
+			nSamples := bs2*rsi2*3 + 7 // ≥2 full RSIs + partial tail
+			add(vecName(16, bs2, rsi2, padFlags, "rand"), 16, bs2, rsi2, padFlags, nSamples, func(i int) uint32 {
+				return uint32(rng.Intn(1 << 16))
+			})
+		}
+	}
+
+	// RestrictedCodes vectors: bps 1/2/4 (restricted set only valid for bps 1..4),
+	// small block/rsi combos, with and without DataPreprocess/DataMSB.
+	for _, bps2 := range []int{1, 2, 4} {
+		for _, rcFlags := range []Flags{
+			RestrictedCodes,
+			RestrictedCodes | DataPreprocess | DataMSB,
+		} {
+			for _, bs2 := range []int{8, 16} {
+				for _, rsi2 := range []int{1, 4} {
+					nSamples := bs2*rsi2*4 + 5
+					bpsForRng := bps2
+					add(vecName(bps2, bs2, rsi2, rcFlags, "rand"), bps2, bs2, rsi2, rcFlags, nSamples, func(i int) uint32 {
+						return uint32(rng.Intn(1 << uint(bpsForRng)))
+					})
+				}
+			}
+		}
+	}
+
+	// Intermediate bps and 3-byte LSB combo for defence-in-depth.
+	for _, bps2 := range []int{13, 20} {
+		for _, bs2 := range []int{16, 32} {
+			fl2 := DataPreprocess | DataMSB
+			nSamples := bs2*4 + 7
+			add(vecName(bps2, bs2, 4, fl2, "rand"), bps2, bs2, 4, fl2, nSamples, func(i int) uint32 {
+				return uint32(rng.Intn(1 << uint(min(bps2, 16))))
+			})
+		}
+	}
+	// bps 24, 3-byte LSB (Data3Byte without DataMSB).
+	add(vecName(24, 16, 4, Data3Byte, "rand"), 24, 16, 4, Data3Byte, 16*4*2+7, func(i int) uint32 {
+		return uint32(rng.Intn(1 << 16))
+	})
+
 	return vs
 }
 

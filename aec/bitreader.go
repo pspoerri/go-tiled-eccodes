@@ -96,6 +96,14 @@ func (b *bitReader) getBits(n int) (uint32, bool) {
 	return v, true
 }
 
+// alignToByte discards the partial-byte remainder of the bit accumulator so
+// that the next read starts on a byte boundary. Mirrors libaec's
+// `state->bitp -= state->bitp % 8` at RSI boundaries when AEC_PAD_RSI is set.
+// Only cnt is adjusted; pos and acc are not touched.
+func (b *bitReader) alignToByte() {
+	b.cnt -= b.cnt % 8
+}
+
 // getFS reads a fundamental-sequence value: the number of consecutive 0 bits
 // before the next 1 bit. The terminating 1 is consumed. Mirrors fs_ask+fs_drop.
 //
