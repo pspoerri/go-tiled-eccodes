@@ -5,3 +5,6 @@
 # OS / editor cruft
 .DS_Store
 *.swp
+
+# Claude Code per-user local state (allowlists, etc.)
+.claude/settings.local.json
