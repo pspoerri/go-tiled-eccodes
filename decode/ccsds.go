@@ -2,21 +2,11 @@ package decode
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
 
 	"github.com/pspoerri/go-tiled-eccodes/internal/bswap"
 )
-
-// ErrCgoRequired is returned by CCSDS / JPEG2000 decoders when the binary
-// was built without CGo. Both formats require linking against a system
-// library — libaec for CCSDS, libopenjp2 for JPEG2000 — so they cannot be
-// implemented in pure Go without re-engineering the codecs from scratch
-// (libaec is a few thousand lines of careful C; libopenjp2 is tens of
-// thousands). Build with CGo enabled (the Go default) and the matching
-// system library installed to use these packings.
-var ErrCgoRequired = errors.New("decode: this packing requires a CGo build with the corresponding system library installed")
 
 // CCSDS decodes Data Representation Template 5.42 (CCSDS 121.0-B-3
 // adaptive entropy coding, the same algorithm libaec implements).
@@ -34,9 +24,8 @@ var ErrCgoRequired = errors.New("decode: this packing requires a CGo build with 
 //
 // Decoded value: Y = (R + X * 2^E) / 10^D
 //
-// The Section 7 payload is the raw libaec/CCSDS bitstream; this function
-// hands it to the system libaec via the cgo-tagged ccsdsDecode helper. On
-// builds without CGo the helper returns ErrCgoRequired.
+// The Section 7 payload is the raw CCSDS/AEC bitstream; this function decodes
+// it with the pure-Go aec package (a port of libaec) — no CGo required.
 func CCSDS(template, data []byte, numPoints int, dst []float64) ([]float64, error) {
 	if len(template) < 14 {
 		return nil, fmt.Errorf("decode: template 5.42 too short (%d bytes)", len(template))
