@@ -82,3 +82,99 @@ func TestSETable(t *testing.T) {
 		t.Fatalf("m=1 entry = (%d,%d) want (1,1)", tab[2], tab[3])
 	}
 }
+
+// bitWriter writes bits MSB-first, the same order bitReader consumes them.
+type bitWriter struct {
+	buf []byte
+	acc uint64
+	cnt int
+}
+
+func (w *bitWriter) put(v uint32, n int) {
+	w.acc = w.acc<<uint(n) | uint64(v&(1<<uint(n)-1))
+	w.cnt += n
+	for w.cnt >= 8 {
+		w.cnt -= 8
+		w.buf = append(w.buf, byte(w.acc>>uint(w.cnt)))
+	}
+}
+
+func (w *bitWriter) bytes() []byte {
+	out := w.buf
+	if w.cnt > 0 {
+		out = append(out, byte(w.acc<<uint(8-w.cnt))) // pad final byte with zeros
+	}
+	return out
+}
+
+// helper: build a uint32 sample buffer into MSB/LSB bytes the way Decode emits.
+func packSamples(samples []uint32, bytesPer int, msb bool) []byte {
+	out := make([]byte, len(samples)*bytesPer)
+	for i, v := range samples {
+		o := i * bytesPer
+		switch bytesPer {
+		case 1:
+			out[o] = byte(v)
+		case 2:
+			if msb {
+				out[o], out[o+1] = byte(v>>8), byte(v)
+			} else {
+				out[o], out[o+1] = byte(v), byte(v>>8)
+			}
+		case 4:
+			if msb {
+				out[o], out[o+1], out[o+2], out[o+3] = byte(v>>24), byte(v>>16), byte(v>>8), byte(v)
+			} else {
+				out[o], out[o+1], out[o+2], out[o+3] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
+			}
+		}
+	}
+	return out
+}
+
+// TestUncompNoPP: one block of 8 uncompressed 8-bit samples, no preprocessing.
+// id_len=3, id_max=7 -> uncompressed id is 0b111. Then 8 raw 8-bit samples.
+func TestUncompNoPP(t *testing.T) {
+	cfg := Config{BitsPerSample: 8, BlockSize: 8, RSI: 2, Flags: 0}
+	samples := []uint32{10, 20, 30, 40, 250, 1, 2, 3}
+	// Bitstream: id (111) then each sample as 8 bits.
+	var bw bitWriter
+	bw.put(0b111, 3)
+	for _, s := range samples {
+		bw.put(s, 8)
+	}
+	dst := make([]byte, len(samples)) // exactly 8 bytes -> needed=8 samples (one block)
+	n, err := Decode(dst, bw.bytes(), cfg)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := packSamples(samples, 1, false)
+	if n != len(want) || string(dst[:n]) != string(want) {
+		t.Fatalf("got %v (n=%d), want %v", dst[:n], n, want)
+	}
+}
+
+// TestUncompPPUnsigned: preprocessing on, unsigned 16-bit. First sample is the
+// raw reference; subsequent stored values are mapped residuals reversed by the
+// predictor. We pick residuals that stay in range so the zig-zag branch applies.
+func TestUncompPPUnsigned(t *testing.T) {
+	cfg := Config{BitsPerSample: 16, BlockSize: 8, RSI: 2, Flags: DataPreprocess | DataMSB}
+	// reference=1000. residuals d: 2->+1, 4->+2, 1->-1, 0->0, 6->+3, 3->-2, 8->+4
+	// (even d -> +d/2, odd d -> -(d+1)/2), accumulated onto the predictor.
+	stored := []uint32{1000, 2, 4, 1, 0, 6, 3, 8}
+	wantSamples := []uint32{1000, 1001, 1003, 1002, 1002, 1005, 1003, 1007}
+	var bw bitWriter
+	bw.put(0b1111, 4) // id_len=4, id_max=15
+	for _, s := range stored {
+		bw.put(s, 16)
+	}
+	dst := make([]byte, len(stored)*2)
+	n, err := Decode(dst, bw.bytes(), cfg)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := packSamples(wantSamples, 2, true)
+	if n != len(want) || string(dst[:n]) != string(want) {
+		t.Fatalf("got %v, want %v", dst[:n], want)
+	}
+}
