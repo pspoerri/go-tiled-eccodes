@@ -196,12 +196,11 @@ func (d *decoder) secondExtension(ref int) error {
 // Mirrors libaec's FLUSH macro.
 func (d *decoder) flush(buf []uint32) {
 	if !d.pp {
-		for _, v := range buf {
-			if d.emitted >= d.needed {
-				return
-			}
-			d.put(v)
+		// Cap to the number of samples we still need.
+		if rem := d.needed - d.emitted; rem < len(buf) {
+			buf = buf[:rem]
 		}
+		d.writeSamples(buf)
 		return
 	}
 
@@ -210,15 +209,20 @@ func (d *decoder) flush(buf []uint32) {
 		m := uint32(1) << uint(d.cfg.BitsPerSample-1)
 		last = (last ^ m) - m // sign-extend the reference
 	}
-	d.put(last)
+	// We decode into d.rsiBuf in place, reusing the slice for writeSamples.
+	// Overwrite buf[0] with the decoded reference so writeSamples can handle
+	// it uniformly.
+	buf[0] = last
 	data := last
 	xmax := d.xmax
+	n := len(buf)
+	if rem := d.needed - d.emitted; rem < n {
+		n = rem
+	}
 	if d.xmin == 0 {
 		med := xmax/2 + 1
-		for _, dd := range buf[1:] {
-			if d.emitted >= d.needed {
-				break
-			}
+		for i := 1; i < n; i++ {
+			dd := buf[i]
 			halfD := dd>>1 + dd&1
 			var mask uint32
 			if data&med != 0 {
@@ -229,13 +233,11 @@ func (d *decoder) flush(buf []uint32) {
 			} else {
 				data = mask ^ dd
 			}
-			d.put(data)
+			buf[i] = data
 		}
 	} else {
-		for _, dd := range buf[1:] {
-			if d.emitted >= d.needed {
-				break
-			}
+		for i := 1; i < n; i++ {
+			dd := buf[i]
 			halfD := dd>>1 + dd&1
 			if int32(data) < 0 {
 				if halfD <= xmax+data+1 {
@@ -250,41 +252,63 @@ func (d *decoder) flush(buf []uint32) {
 					data = xmax - dd
 				}
 			}
-			d.put(data)
+			buf[i] = data
 		}
 	}
 	d.lastOut = data
+	d.writeSamples(buf[:n])
 }
 
-// put serializes one sample to dst at the configured width and endianness,
-// capped at the number of samples that fit. Mirrors put_msb_*/put_lsb_*.
-func (d *decoder) put(v uint32) {
-	if d.emitted >= d.needed {
+// writeSamples serializes a slice of decoded samples to dst using the
+// configured width and endianness. The width+endianness dispatch is hoisted
+// once over the whole slice, eliminating a per-sample switch/branch.
+// Mirrors put_msb_*/put_lsb_* but batched.
+func (d *decoder) writeSamples(buf []uint32) {
+	n := len(buf)
+	if n == 0 {
 		return
 	}
-	o := d.outPos
+	dst := d.dst[d.outPos:]
 	switch d.bytesPerSample {
 	case 1:
-		d.dst[o] = byte(v)
+		dst = dst[:n] // BCE: prove slice is large enough, eliminate per-element checks
+		for i, v := range buf {
+			dst[i] = byte(v)
+		}
 	case 2:
+		dst = dst[:n*2] // BCE hint
 		if d.msb {
-			d.dst[o], d.dst[o+1] = byte(v>>8), byte(v)
+			for i, v := range buf {
+				dst[2*i], dst[2*i+1] = byte(v>>8), byte(v)
+			}
 		} else {
-			d.dst[o], d.dst[o+1] = byte(v), byte(v>>8)
+			for i, v := range buf {
+				dst[2*i], dst[2*i+1] = byte(v), byte(v>>8)
+			}
 		}
 	case 3:
+		dst = dst[:n*3] // BCE hint
 		if d.msb {
-			d.dst[o], d.dst[o+1], d.dst[o+2] = byte(v>>16), byte(v>>8), byte(v)
+			for i, v := range buf {
+				dst[3*i], dst[3*i+1], dst[3*i+2] = byte(v>>16), byte(v>>8), byte(v)
+			}
 		} else {
-			d.dst[o], d.dst[o+1], d.dst[o+2] = byte(v), byte(v>>8), byte(v>>16)
+			for i, v := range buf {
+				dst[3*i], dst[3*i+1], dst[3*i+2] = byte(v), byte(v>>8), byte(v>>16)
+			}
 		}
 	case 4:
+		dst = dst[:n*4] // BCE hint
 		if d.msb {
-			d.dst[o], d.dst[o+1], d.dst[o+2], d.dst[o+3] = byte(v>>24), byte(v>>16), byte(v>>8), byte(v)
+			for i, v := range buf {
+				dst[4*i], dst[4*i+1], dst[4*i+2], dst[4*i+3] = byte(v>>24), byte(v>>16), byte(v>>8), byte(v)
+			}
 		} else {
-			d.dst[o], d.dst[o+1], d.dst[o+2], d.dst[o+3] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
+			for i, v := range buf {
+				dst[4*i], dst[4*i+1], dst[4*i+2], dst[4*i+3] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
+			}
 		}
 	}
-	d.outPos += d.bytesPerSample
-	d.emitted++
+	d.outPos += n * d.bytesPerSample
+	d.emitted += n
 }
