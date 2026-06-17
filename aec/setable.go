@@ -4,6 +4,12 @@ package aec
 // (libaec's SE_TABLE_SIZE). FS values above this are a data error.
 const seTableSize = 90
 
+// seTable is the package-level precomputed inverse of the second-extension
+// triangular map, built once at program start. For a decoded FS value m,
+// seTable[2m] = d0+d1 (the pair sum) and seTable[2m+1] = the row base
+// (sum)*(sum+1)/2. Mirrors libaec create_se_table.
+var seTable = buildSETable()
+
 // buildSETable precomputes the inverse of the second-extension triangular
 // map. For a decoded FS value m, table[2m] = d0+d1 (the pair sum) and
 // table[2m+1] = the row base (sum)*(sum+1)/2. Mirrors libaec create_se_table.
