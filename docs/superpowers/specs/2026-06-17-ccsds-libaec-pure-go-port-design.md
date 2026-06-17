@@ -125,28 +125,41 @@ independently testable units:
 
 ### Preprocessing reversal
 
-When `DataPreprocess` is set (the GRIB case):
+When `DataPreprocess` is set (the GRIB case), the four code options above
+write *mapped residuals* `d` into a per-RSI sample buffer; the predictor
+inversion runs when the buffer flushes (per full RSI, plus a final partial
+flush). The port reproduces libaec's exact arithmetic (decode.c `FLUSH`
+macro), **not** the textbook `theta` formulation:
 
 - The **first sample of each RSI segment is a reference**: read as a raw
-  `BitsPerSample` literal and output directly. It seeds the predictor for the
-  rest of the segment; the remainder of its block decodes as differences.
-- Every subsequent mapped value `d` is inverted to a signed delta via the
-  boundary-aware unmapping, then accumulated onto the predictor `prev`:
-  - `theta = min(prev - xmin, xmax - prev)`
-  - if `d <= 2*theta`: `delta = d/2` when `d` even, else `delta = -(d+1)/2`
-  - else: `delta = d - theta` if the lower boundary is closer
-    (`theta == prev - xmin`), else `delta = theta - d`
-  - `x = prev + delta`, then `prev = x`.
+  `BitsPerSample` literal into buffer slot 0. On flush it becomes the
+  predictor `prev` (`last_out`), sign-extended via `(v ^ m) - m`,
+  `m = 1<<(BitsPerSample-1)`, when `DataSigned`; it is emitted directly.
+- Each subsequent mapped `d` is reversed against `prev` using the zig-zag term
+  `zz(d) = (d>>1) ^ ^((d&1)-1)` (Go `^` = bitwise NOT) — even `d` → `+d/2`,
+  odd `d` → `−(d+1)/2`, computed in wrapping `uint32`. With `half_d =
+  (d>>1)+(d&1)`, two branches mirror libaec:
+  - **unsigned (`xmin==0`):** `med = xmax/2+1`; `mask = (prev&med)?xmax:0`; if
+    `half_d <= mask^prev` then `prev += zz(d)` else `prev = mask^d`.
+  - **signed (`xmin!=0`):** if `int32(prev)<0` then `half_d <= xmax+prev+1 ?
+    prev+=zz(d) : prev = d-xmax-1`; else `half_d <= xmax-prev ? prev+=zz(d) :
+    prev = xmax-d`.
+- `prev` carries across blocks within an RSI and resets to the new reference
+  at each RSI boundary.
 
-When `DataPreprocess` is off, the decoded option values are the samples
-directly (unsigned, reinterpreted as signed when `DataSigned`).
+When `DataPreprocess` is off, the decoded option values are emitted directly
+(reinterpreted as signed when `DataSigned`), no predictor.
 
 ### Output serialization
 
 Each reconstructed sample is written at `bytesPerSample` width, big-endian
-iff `DataMSB` (3-byte form always big-endian). This reproduces exactly what
-libaec's `aec_buffer_decode` writes, so `decode/ccsds.go`'s existing
-byte→float64 conversion needs no change.
+iff `DataMSB`, else little-endian. The 3-byte form honors `DataMSB` like the
+others (libaec has both `put_msb_24` and `put_lsb_24`) — it is *not*
+unconditionally big-endian. This reproduces exactly what libaec's
+`aec_buffer_decode` writes, so `decode/ccsds.go`'s existing byte→float64
+conversion needs no change. (Note: `ccsds.go`'s 3-byte branch assumes
+big-endian, which is correct for GRIB because eccodes always sets `DataMSB`
+for CCSDS; the general `aec` package must still honor the flag.)
 
 ## Testing & validation
 
@@ -159,7 +172,7 @@ sample array. A dev-time generator uses libaec's **encoder** to produce
 `(random samples → encoded bitstream)` pairs, and writes the bitstream plus
 the expected decoded bytes into checked-in fixtures.
 
-- The generator is build-tagged `//go:build aecgen` (and links libaec via
+- The generator is build-tagged `//go:build libaec` (and links libaec via
   CGo), so normal builds and `go test ./...` never touch libaec.
 - Parameter sweep covers: `BitsPerSample` boundaries (1, 8, 9, 16, 17, 24,
   25, 32), each `BlockSize` (8/16/32/64), small and large `RSI`, signed and
@@ -170,6 +183,17 @@ the expected decoded bytes into checked-in fixtures.
 - Default `go test ./aec` reads only the frozen fixtures and asserts the
   pure-Go decoder reproduces the original samples exactly. **No libaec at
   test runtime.**
+
+### 1b. Retained libaec differential test (`//go:build libaec`)
+
+A retained — not throwaway — differential test, in the same `libaec`-tagged
+file(s) as the generator. When run with `-tags libaec` against an installed
+libaec, it decodes every parameter-sweep input (and the GRIB Section-7
+payloads) with **both** the pure-Go decoder and libaec's `aec_buffer_decode`
+and asserts **byte-for-byte equality**. This is the authoritative cross-check
+("validated with libaec during testing") and the same harness that
+(re)generates the frozen fixtures, so the two can never drift. CI without
+libaec runs only the frozen vectors; CI/dev with libaec runs both.
 
 ### 2. Unit tests on the fiddly primitives
 
@@ -193,10 +217,21 @@ triangular inverse.
 
 ### Development process
 
-TDD against the golden vectors. During the port a temporary CGo differential
-check (decode the same bitstream with both pure-Go and libaec, assert
-byte-equality) may be used to localize any mismatch; it is removed from the
-shipped tree before completion.
+TDD against the golden vectors, with the retained `//go:build libaec`
+differential test (§1b) as the byte-exact oracle during the port and
+thereafter.
+
+### Reporting upstream findings
+
+The port targets libaec **v1.1.7** (GitHub `MathisRosenhauer/libaec`). If any
+genuine bug or deviation from CCSDS 121.0-B-3 is found in the reference
+algorithm while porting — as opposed to a faithful-but-surprising behavior —
+it is recorded in the implementation notes and surfaced to the maintainer
+rather than silently "fixed", so the pure-Go decoder stays bug-compatible with
+libaec unless we deliberately choose otherwise. (One known divergence already:
+this fork's `v1.1.7` tag ships hardened multi-byte bit readers
+`direct_get`/`direct_get_fs` that decode identically to stock libaec — a
+structural difference, not a bug.)
 
 ## Performance
 
@@ -215,11 +250,11 @@ away correctness.
 - `b.ReportAllocs()` on every benchmark; the steady-state target is **0
   allocs/op** for a caller-supplied `dst` (the decoder allocates no
   per-block/per-segment scratch on the hot path).
-- A baseline comparison against libaec (CGo, build-tagged `//go:build aecgen`
-  alongside the vector generator) is recorded **once** during development to
-  confirm the pure-Go decoder is at least competitive — ideally faster, since
-  it avoids the cgo call boundary and pointer pinning. The comparison is not
-  part of the shipped test suite.
+- A baseline comparison against libaec (CGo, build-tagged `//go:build libaec`
+  alongside the vector generator and differential test) is recorded during
+  development to confirm the pure-Go decoder is at least competitive — ideally
+  faster, since it avoids the cgo call boundary and pointer pinning. The
+  libaec-backed benchmark only builds under `-tags libaec`.
 - The repo-level `bench_test.go` / `eccodestest` GRIB benchmarks gain a CCSDS
   case so end-to-end first-tile decode cost is tracked.
 
