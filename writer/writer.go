@@ -1,8 +1,9 @@
 // Package writer produces synthetic GRIB2 byte streams for tests. It encodes
-// minimal but spec-compliant messages: simple packing (Section 5 template 0),
-// product definition template 4.0, and any of the rectangular grid templates
-// (3.0 lat/lon, 3.1 rotated lat/lon, 3.10 Mercator, 3.20 polar stereographic,
-// 3.30 Lambert conformal, 3.40 Gaussian — regular only).
+// minimal but spec-compliant messages: simple packing (5.0), IEEE float (5.4),
+// PNG (5.41), and CCSDS adaptive entropy coding (5.42, via libaec behind a CGo
+// build tag); product definition template 4.0; and any of the rectangular grid
+// templates (3.0 lat/lon, 3.1 rotated lat/lon, 3.10 Mercator, 3.20 polar
+// stereographic, 3.30 Lambert conformal, 3.40 Gaussian — regular only).
 //
 // Scope: testing. The writer is the inverse of just enough of the decoder to
 // round-trip Field values. It is not a full GRIB2 producer.
@@ -27,7 +28,29 @@ const (
 	PackingSimple PackingType = iota // 5.0
 	PackingIEEE                      // 5.4 — IEEE-754 floats verbatim
 	PackingPNG                       // 5.41 — PNG-encoded gridpoint values
+	PackingCCSDS                     // 5.42 — CCSDS adaptive entropy coding (libaec)
 )
+
+// CCSDS (template 5.42) defaults. These match the parameters DWD uses for its
+// ICON open-data products: flags 14 = AEC_DATA_3BYTE | AEC_DATA_MSB |
+// AEC_DATA_PREPROCESS, block size 32, reference sample interval 128.
+const (
+	ccsdsDefaultFlags     uint8  = 14
+	ccsdsDefaultBlockSize uint8  = 32
+	ccsdsDefaultRSI       uint16 = 128
+
+	// libaec flag bits (see libaec.h). Used to lay out Section 7 samples the
+	// same way the decoder reads them back. The writer only ever emits
+	// unsigned samples (X ≥ 0), so AEC_DATA_SIGNED is never set.
+	aecData3Byte uint8 = 0x02
+	aecDataMSB   uint8 = 0x04
+)
+
+// ErrCCSDSNeedsCgo is returned when CCSDS (template 5.42) encoding is requested
+// on a build without CGo. Like the decoder's decode.ErrCgoRequired, AEC coding
+// links the system libaec, so a pure-Go build can still compile but cannot
+// produce 5.42 messages. Build with CGO_ENABLED=1 and libaec installed.
+var ErrCCSDSNeedsCgo = errors.New("writer: CCSDS (template 5.42) encoding requires a CGo build with libaec installed")
 
 // Field is a single packed data record: identification + product metadata +
 // grid + values. Values are in natural scanning order (W→E within rows, rows
@@ -70,6 +93,13 @@ type Field struct {
 	// IEEEPrecision: 1 = float32, 2 = float64. Only consulted when Packing
 	// is PackingIEEE. Defaults to 1 (single precision) when unset.
 	IEEEPrecision uint8
+
+	// CCSDS (template 5.42) AEC tuning. Consulted only when Packing is
+	// PackingCCSDS. Zero values fall back to the DWD/ICON defaults: flags 14,
+	// block size 32, reference sample interval 128.
+	CCSDSFlags     uint8
+	CCSDSBlockSize uint8
+	CCSDSRSI       uint16
 
 	// ReuseBitmap, when set on a non-first field within a Bundle, emits
 	// Section 6 with indicator 254 ("reuse bitmap previously defined in
@@ -164,7 +194,10 @@ func encodeMessage(fields []Field) ([]byte, error) {
 		}
 		body.Write(s3)
 		body.Write(encodeSection4(f))
-		s5, s6, s7 := encodeData(f)
+		s5, s6, s7, err := encodeData(f)
+		if err != nil {
+			return nil, err
+		}
 		body.Write(s5)
 		body.Write(s6)
 		body.Write(s7)
@@ -268,7 +301,7 @@ func encodeSection4(f Field) []byte {
 // encodeData encodes Sections 5/6/7 from a field's Values, returning each as
 // a complete section ready to concatenate. Reorders values into the storage
 // order implied by the grid's scanning bits before packing.
-func encodeData(f Field) (s5, s6, s7 []byte) {
+func encodeData(f Field) (s5, s6, s7 []byte, err error) {
 	stored := reorderForStorage(f.Grid, f.Values)
 	bitmap, nset, hasMissing := buildBitmap(stored)
 
@@ -284,6 +317,11 @@ func encodeData(f Field) (s5, s6, s7 []byte) {
 		s5, s7 = encodeDataIEEE(valid, nset, f.IEEEPrecision)
 	case PackingPNG:
 		s5, s7 = encodeDataPNG(valid, nset, f.NumBits)
+	case PackingCCSDS:
+		s5, s7, err = encodeDataCCSDS(valid, nset, f)
+		if err != nil {
+			return nil, nil, nil, err
+		}
 	default:
 		s5, s7 = encodeDataSimple(valid, nset, f.NumBits)
 	}
@@ -310,7 +348,7 @@ func encodeData(f Field) (s5, s6, s7 []byte) {
 		s6[5] = 255 // no bitmap
 	}
 
-	return s5, s6, s7
+	return s5, s6, s7, nil
 }
 
 func encodeDataSimple(valid []float64, nset int, requestedBits uint8) (s5, s7 []byte) {
@@ -454,6 +492,120 @@ func encodeDataPNG(valid []float64, nset int, requestedBits uint8) (s5, s7 []byt
 	return s5, s7
 }
 
+// encodeDataCCSDS emits Section 5 template 5.42 (CCSDS adaptive entropy
+// coding) plus a libaec-compressed Section 7. The integer samples are produced
+// by the same quantization the simple-packing path uses, then serialized into
+// fixed-width MSB-first words and handed to aec_buffer_encode. Constant fields
+// (nbits=0) carry no samples: Section 7 is empty and no AEC call is made,
+// matching what decode.CCSDS expects.
+func encodeDataCCSDS(valid []float64, nset int, f Field) (s5, s7 []byte, err error) {
+	flags := f.CCSDSFlags
+	if flags == 0 {
+		flags = ccsdsDefaultFlags
+	}
+	blockSize := f.CCSDSBlockSize
+	if blockSize == 0 {
+		blockSize = ccsdsDefaultBlockSize
+	}
+	rsi := f.CCSDSRSI
+	if rsi == 0 {
+		rsi = ccsdsDefaultRSI
+	}
+
+	refValue, binScale, decScale, nbits, samples := quantize(valid, f.NumBits)
+
+	var payload []byte
+	if nbits != 0 {
+		raw := serializeSamples(samples, nbits, flags)
+		payload, err = ccsdsEncode(raw, int(nbits), uint(blockSize), uint(rsi), uint(flags))
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// Section 5: 11-byte prefix + 14-byte template body.
+	s5 = make([]byte, 11+14)
+	binary.BigEndian.PutUint32(s5[0:], uint32(len(s5)))
+	s5[4] = 5
+	binary.BigEndian.PutUint32(s5[5:], uint32(nset))
+	binary.BigEndian.PutUint16(s5[9:], 42) // template 5.42
+	t := s5[11:]
+	binary.BigEndian.PutUint32(t[0:], math.Float32bits(refValue))
+	putI16SM(t[4:], binScale)
+	putI16SM(t[6:], decScale)
+	t[8] = nbits
+	t[9] = 0 // type of original field values: 0 = floating point
+	t[10] = flags
+	t[11] = blockSize
+	binary.BigEndian.PutUint16(t[12:], rsi)
+
+	// Section 7
+	s7 = make([]byte, 5+len(payload))
+	binary.BigEndian.PutUint32(s7[0:], uint32(len(s7)))
+	s7[4] = 7
+	copy(s7[5:], payload)
+	return s5, s7, nil
+}
+
+// serializeSamples lays integer samples into the fixed-width byte stream
+// libaec expects: bytesPerSample-wide words, MSB-first when AEC_DATA_MSB is
+// set. This is the exact inverse of decode.CCSDS's read loop, so any sample
+// width / byte order the decoder accepts round-trips.
+func serializeSamples(samples []uint32, nbits, flags uint8) []byte {
+	bps := bytesPerSampleForBits(int(nbits), flags)
+	msb := flags&aecDataMSB != 0
+	out := make([]byte, len(samples)*bps)
+	for i, x := range samples {
+		off := i * bps
+		switch bps {
+		case 1:
+			out[off] = byte(x)
+		case 2:
+			if msb {
+				out[off] = byte(x >> 8)
+				out[off+1] = byte(x)
+			} else {
+				out[off] = byte(x)
+				out[off+1] = byte(x >> 8)
+			}
+		case 3:
+			// 24-bit samples are always MSB-first per the CCSDS standard.
+			out[off] = byte(x >> 16)
+			out[off+1] = byte(x >> 8)
+			out[off+2] = byte(x)
+		default: // 4
+			if msb {
+				out[off] = byte(x >> 24)
+				out[off+1] = byte(x >> 16)
+				out[off+2] = byte(x >> 8)
+				out[off+3] = byte(x)
+			} else {
+				out[off] = byte(x)
+				out[off+1] = byte(x >> 8)
+				out[off+2] = byte(x >> 16)
+				out[off+3] = byte(x >> 24)
+			}
+		}
+	}
+	return out
+}
+
+// bytesPerSampleForBits mirrors libaec's (and decode.bytesPerSampleFromBits's)
+// storage-width selection: 1, 2, or 4 bytes by default, with AEC_DATA_3BYTE
+// forcing 3 bytes for 17–24 bit-per-sample data.
+func bytesPerSampleForBits(nbits int, flags uint8) int {
+	switch {
+	case nbits <= 8:
+		return 1
+	case nbits <= 16:
+		return 2
+	case flags&aecData3Byte != 0 && nbits <= 24:
+		return 3
+	default:
+		return 4
+	}
+}
+
 // reorderForStorage takes Values in natural (W→E, N→S, row-major) order and
 // returns a buffer in the storage order implied by the grid's scanning bits
 // — i.e. exactly the order the decoder will produce after un-applying its
@@ -494,10 +646,12 @@ func buildBitmap(values []float64) (bitmap []byte, nset int, hasMissing bool) {
 	return bitmap, nset, true
 }
 
-// pack chooses Section 5 template-0 parameters and emits the bit-packed
-// payload for the given valid (non-missing) values. Returns nbits=0 when the
-// field is constant (or when caller forces it via Field.NumBits=0).
-func pack(valid []float64, requestedBits uint8) (refValue float32, binScale, decScale int16, nbits uint8, packed []byte) {
+// quantize chooses Section 5 reference/scale parameters and returns the
+// integer samples X (where Y ≈ R + X·2^E) for the given valid (non-missing)
+// values. Returns nbits=0 with no samples when the field is constant (or when
+// the caller forces it via Field.NumBits=0). Shared by every packing that uses
+// the R + X·2^E quantization: simple (via pack), PNG, and CCSDS.
+func quantize(valid []float64, requestedBits uint8) (refValue float32, binScale, decScale int16, nbits uint8, samples []uint32) {
 	if len(valid) == 0 {
 		return 0, 0, 0, 0, nil
 	}
@@ -533,9 +687,9 @@ func pack(valid []float64, requestedBits uint8) (refValue float32, binScale, dec
 	binScale = int16(math.Ceil(math.Log2(span / target)))
 	pow2E := math.Ldexp(1, int(binScale))
 
-	bw := newBitWriter(nbits, len(valid))
 	maxX := uint32(target)
-	for _, v := range valid {
+	samples = make([]uint32, len(valid))
+	for i, v := range valid {
 		diff := v - float64(refValue)
 		if diff < 0 {
 			diff = 0
@@ -544,9 +698,24 @@ func pack(valid []float64, requestedBits uint8) (refValue float32, binScale, dec
 		if x > maxX {
 			x = maxX
 		}
+		samples[i] = x
+	}
+	return refValue, binScale, 0, nbits, samples
+}
+
+// pack chooses Section 5 template-0 parameters and emits the bit-packed
+// payload for the given valid (non-missing) values. Returns nbits=0 when the
+// field is constant (or when caller forces it via Field.NumBits=0).
+func pack(valid []float64, requestedBits uint8) (refValue float32, binScale, decScale int16, nbits uint8, packed []byte) {
+	refValue, binScale, decScale, nbits, samples := quantize(valid, requestedBits)
+	if nbits == 0 {
+		return refValue, binScale, decScale, 0, nil
+	}
+	bw := newBitWriter(nbits, len(samples))
+	for _, x := range samples {
 		bw.write(x)
 	}
-	return refValue, binScale, 0, nbits, bw.finish()
+	return refValue, binScale, decScale, nbits, bw.finish()
 }
 
 type bitWriter struct {

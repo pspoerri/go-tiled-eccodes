@@ -84,7 +84,7 @@ many goroutines without locking. This library targets exactly that path:
 | GRIB2 reader (mmap, lazy index) | ✅ |
 | GRIB1 | ❌ out of scope |
 | BUFR | ❌ out of scope |
-| Encode / write | ⚠️ partial — `writer` subpackage emits simple (5.0), IEEE float (5.4), and PNG (5.41) packings on rectangular grids (3.0, 3.1, 3.10, 3.20, 3.30, regular 3.40) for tests and synthetic fixtures; not a full GRIB2 producer |
+| Encode / write | ⚠️ partial — `writer` subpackage emits simple (5.0), IEEE float (5.4), PNG (5.41), and CCSDS (5.42, via libaec/CGo) packings on rectangular grids (3.0, 3.1, 3.10, 3.20, 3.30, regular 3.40) for tests and synthetic fixtures; not a full GRIB2 producer |
 
 ### Data Representation Templates (Section 5)
 | Template | Name | Status |
