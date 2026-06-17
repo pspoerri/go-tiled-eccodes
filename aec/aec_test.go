@@ -204,6 +204,63 @@ func TestSplitK0NoPP(t *testing.T) {
 	}
 }
 
+// TestZeroBlockNoPP: id=0 then sub-id=0 -> zero block. FS value f -> zero_blocks
+// = f+1 (for f+1 < 5). One zero block = block_size zero samples. Then a second,
+// uncompressed block so the RSI has some non-zero data too.
+func TestZeroBlockNoPP(t *testing.T) {
+	cfg := Config{BitsPerSample: 8, BlockSize: 4, RSI: 4, Flags: 0}
+	var bw bitWriter
+	// Block 1: zero block, f=1 -> zero_blocks=2 -> 8 zero samples (2 blocks).
+	bw.put(0, 3) // id=0 (low entropy)
+	bw.put(0, 1) // sub-id 0 -> zero block
+	bw.put(1, 2) // FS: f=1 (one 0 then 1)
+	// Block 3 (index 2): uncompressed 4 samples.
+	bw.put(7, 3) // id_max -> uncompressed
+	for _, s := range []uint32{9, 8, 7, 6} {
+		bw.put(s, 8)
+	}
+	dst := make([]byte, 12) // 8 zeros + 4 samples
+	n, err := Decode(dst, bw.bytes(), cfg)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := []byte{0, 0, 0, 0, 0, 0, 0, 0, 9, 8, 7, 6}
+	if n != len(want) || string(dst[:n]) != string(want) {
+		t.Fatalf("got %v, want %v", dst[:n], want)
+	}
+}
+
+// TestSecondExtensionNoPP: id=0 then sub-id=1 -> second extension. Each FS value
+// m maps to a pair (d0,d1) via the SE table; one gamma per pair, block_size/2
+// gammas. With no preprocessing, the pair values are the output samples.
+func TestSecondExtensionNoPP(t *testing.T) {
+	cfg := Config{BitsPerSample: 8, BlockSize: 4, RSI: 4, Flags: 0}
+	tab := buildSETable()
+	ms := []uint32{4, 2} // two gammas -> two pairs -> 4 samples
+	var want []uint32
+	for _, m := range ms {
+		d1 := int(m) - tab[2*m+1]
+		d0 := tab[2*m] - d1
+		want = append(want, uint32(d0), uint32(d1))
+	}
+	var bw bitWriter
+	bw.put(0, 3) // id=0
+	bw.put(1, 1) // sub-id 1 -> second extension
+	for _, m := range ms {
+		bw.put(1, int(m)+1) // FS for gamma
+	}
+	dst := make([]byte, 4)
+	n, err := Decode(dst, bw.bytes(), cfg)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for i := range want {
+		if uint32(dst[:n][i]) != want[i] {
+			t.Fatalf("sample %d = %d, want %d", i, dst[i], want[i])
+		}
+	}
+}
+
 // TestUncompPPUnsigned: preprocessing on, unsigned 16-bit. First sample is the
 // raw reference; subsequent stored values are mapped residuals reversed by the
 // predictor. We pick residuals that stay in range so the zig-zag branch applies.
