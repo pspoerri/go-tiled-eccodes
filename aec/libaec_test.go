@@ -98,6 +98,36 @@ func sweepVectors(t testing.TB) []vector {
 	return vs
 }
 
+// TestDifferentialLibaec decodes every swept input with BOTH the pure-Go
+// decoder and libaec, asserting byte-for-byte equality. This is the
+// authoritative cross-check; it only builds under -tags libaec.
+func TestDifferentialLibaec(t *testing.T) {
+	for _, v := range sweepVectors(t) {
+		v := v
+		t.Run(v.Name, func(t *testing.T) {
+			want, _ := base64.StdEncoding.DecodeString(v.SamplesB64)
+			stream, _ := base64.StdEncoding.DecodeString(v.StreamB64)
+			cfg := Config{BitsPerSample: v.BitsPerSample, BlockSize: v.BlockSize, RSI: v.RSI, Flags: Flags(v.Flags)}
+
+			goOut := make([]byte, len(want))
+			n, err := Decode(goOut, stream, cfg)
+			if err != nil {
+				t.Fatalf("go decode: %v", err)
+			}
+			cOut := aecDecodeC(t, stream, len(want), cfg)
+			if n != len(cOut) || string(goOut[:n]) != string(cOut) {
+				// Find first differing byte for a useful message.
+				for i := 0; i < len(cOut) && i < n; i++ {
+					if goOut[i] != cOut[i] {
+						t.Fatalf("byte %d: go=%d libaec=%d (cfg %+v)", i, goOut[i], cOut[i], cfg)
+					}
+				}
+				t.Fatalf("length mismatch: go=%d libaec=%d", n, len(cOut))
+			}
+		})
+	}
+}
+
 // TestGenerateVectors regenerates the frozen fixtures. Run explicitly:
 //
 //	go test -tags libaec ./aec/ -run TestGenerateVectors
