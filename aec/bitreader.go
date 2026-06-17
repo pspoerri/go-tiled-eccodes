@@ -9,7 +9,7 @@ type bitReader struct {
 	src []byte
 	pos int    // index of next byte to load
 	acc uint64 // bit accumulator; meaningful bits are acc[cnt-1 .. 0]
-	cnt int    // number of valid bits in acc (stays < 56)
+	cnt int    // number of valid bits in acc (bulk-load path keeps ≤ 56; byte-at-a-time fallback may reach 64; both fit the 64-bit accumulator)
 }
 
 // ask ensures at least n (<=32) bits are buffered, loading bytes big-endian.

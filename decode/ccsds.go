@@ -18,7 +18,7 @@ import (
 //	bytes 6-7   decimal scale factor D (sign-magnitude int16)
 //	byte  8     number of bits per packed value
 //	byte  9     type of original field values (Code Table 5.1)
-//	byte  10    CCSDS compression options mask (passes through to libaec flags)
+//	byte  10    CCSDS compression options mask (passes through to aec.Flags)
 //	byte  11    CCSDS block size
 //	bytes 12-13 CCSDS reference sample interval (uint16 BE)
 //

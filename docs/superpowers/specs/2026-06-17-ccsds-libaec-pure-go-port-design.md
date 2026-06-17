@@ -300,3 +300,52 @@ link `libopenjp2` and `libaec` via CGo") is corrected to name only JPEG2000.
   once, at dev time, to produce fixtures. Mitigation: fixtures are checked in;
   the regular test suite has no libaec dependency.
 ```
+
+## Implementation notes
+
+_Recorded 2026-06-17 after Tasks 1–11 completion; machine: Apple M5 Pro (arm64)._
+
+### Benchmark results
+
+All numbers from `go test ./aec/ -bench . -benchmem -benchtime=3s` and
+`go test . -bench BenchmarkDecodeICONCCSDS -benchmem -benchtime=5s`.
+The libaec baseline figures below are from the Task 11 libaec-tagged comparison
+(`go test -tags libaec ./aec/ -bench BenchmarkLibaecRamp`).
+
+| Benchmark | Pure-Go ns/op | Pure-Go MB/s | libaec baseline | Ratio |
+|---|---|---|---|---|
+| Ramp (split+preprocess, 2048 samples) | ~2965 ns/op | ~694 MB/s | ~3708 ns/op (~555 MB/s) | ~1.25× faster |
+| Zeros (zero-block path, 2048 samples) | ~1591 ns/op | ~1293 MB/s | — (ramp baseline) | ~2.3× vs ramp |
+| HighEntropy (uncompressed path, 2048 samples) | ~4275 ns/op | ~481 MB/s | — (ramp baseline) | ~1.15× slower vs ramp |
+| `BenchmarkDecodeICONCCSDS` (GRIB end-to-end, ICON-D2 t_2m) | ~5608 ns/op | — | — | — |
+
+Notes:
+- Ramp and Zeros are faster than the libaec baseline because the pure-Go path
+  eliminates the CGo call boundary and pointer pinning overhead.
+- HighEntropy is slightly slower than the ramp libaec baseline; the residual
+  gap is the per-sample `getBits(bitsPerSample)` in the uncompressed path
+  versus the FS+remainder pattern in k-split — no bulk optimization was applied
+  to the uncompressed path.
+- `BenchmarkDecodeICONCCSDS` measures the full GRIB decode pipeline (template
+  parse → AEC decode → byte→float64 conversion) over a 1215×746 ICON-D2 t_2m
+  field.
+
+### Allocation profile
+
+`BenchmarkDecodeRamp` reports **2 allocs/op** — the `decoder` struct and the
+`rsiBuf` slice, both allocated once in `newDecoder` before the hot path.
+The decode loop itself (all of `run`, `decodeBlock`, `split`, `lowEntropy`,
+`zeroBlock`, `secondExtension`, `flush`, `writeSamples`) is allocation-free.
+The SE inverse table (`seTable`) is package-level and never reallocated.
+
+### Upstream findings (libaec v1.1.7)
+
+No bugs found in libaec v1.1.7's algorithm. The pure-Go port is byte-exact
+and bug-compatible with libaec across 508 differential configurations (full
+parameter sweep: BitsPerSample 1/8/9/16/17/24/25/32, all BlockSizes, signed/
+unsigned, MSB/LSB, 3-byte, preprocess on/off, all four code options).
+
+One known structural (non-bug) divergence: this fork's `v1.1.7` tag ships
+hardened multi-byte bit readers (`direct_get`/`direct_get_fs`) that decode
+identically to stock libaec. This is a defense-in-depth change in the fork,
+not a behavioral difference.
