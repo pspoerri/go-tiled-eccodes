@@ -14,7 +14,63 @@ type bitReader struct {
 
 // ask ensures at least n (<=32) bits are buffered, loading bytes big-endian.
 // Returns false if src is exhausted first.
+//
+// Bulk refill: when more bytes are needed, loads as many as fit while keeping
+// cnt ≤ 56, amortising per-byte overhead. The slow path is out-of-lined to
+// keep ask's inlined footprint small.
 func (b *bitReader) ask(n int) bool {
+	if b.cnt >= n {
+		return true
+	}
+	return b.askSlow(n)
+}
+
+// askSlow is the out-of-line refill path for ask. It bulk-loads up to 7 bytes
+// at once to amortise per-byte overhead, keeping cnt ≤ 56 so valid bits are
+// never shifted out of the 64-bit accumulator (acc<<(8·room) is safe when
+// cnt + 8·room ≤ 56). Falls back to byte-at-a-time only at end of input.
+func (b *bitReader) askSlow(n int) bool {
+	src := b.src
+	pos := b.pos
+	acc := b.acc
+	cnt := b.cnt
+	avail := len(src) - pos
+	// How many bytes can we load without exceeding 56 bits in the accumulator?
+	room := (56 - cnt) >> 3
+	if room > avail {
+		room = avail
+	}
+	switch room {
+	case 0:
+		// nothing to load; fall through to byte-at-a-time for end-of-input path.
+	case 1:
+		acc = acc<<8 | uint64(src[pos])
+		cnt += 8
+	case 2:
+		acc = acc<<16 | uint64(src[pos])<<8 | uint64(src[pos+1])
+		cnt += 16
+	case 3:
+		acc = acc<<24 | uint64(src[pos])<<16 | uint64(src[pos+1])<<8 | uint64(src[pos+2])
+		cnt += 24
+	case 4:
+		acc = acc<<32 | uint64(src[pos])<<24 | uint64(src[pos+1])<<16 | uint64(src[pos+2])<<8 | uint64(src[pos+3])
+		cnt += 32
+	case 5:
+		acc = acc<<40 | uint64(src[pos])<<32 | uint64(src[pos+1])<<24 | uint64(src[pos+2])<<16 | uint64(src[pos+3])<<8 | uint64(src[pos+4])
+		cnt += 40
+	case 6:
+		acc = acc<<48 | uint64(src[pos])<<40 | uint64(src[pos+1])<<32 | uint64(src[pos+2])<<24 | uint64(src[pos+3])<<16 | uint64(src[pos+4])<<8 | uint64(src[pos+5])
+		cnt += 48
+	default: // 7
+		acc = acc<<56 | uint64(src[pos])<<48 | uint64(src[pos+1])<<40 | uint64(src[pos+2])<<32 | uint64(src[pos+3])<<24 | uint64(src[pos+4])<<16 | uint64(src[pos+5])<<8 | uint64(src[pos+6])
+		cnt += 56
+	}
+	pos += room
+	b.acc, b.cnt, b.pos = acc, cnt, pos
+	if cnt >= n {
+		return true
+	}
+	// Fallback: byte-at-a-time for the rare case where src is nearly exhausted.
 	for b.cnt < n {
 		if b.pos >= len(b.src) {
 			return false

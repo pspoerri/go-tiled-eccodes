@@ -114,7 +114,6 @@ func newDecoder(dst, src []byte, cfg Config) (*decoder, error) {
 		d.xmax = unsignedMax
 	}
 
-	d.seTable = buildSETable()
 	d.rsiBuf = make([]uint32, d.rsiSize)
 	d.br = bitReader{src: src}
 	d.dst = dst

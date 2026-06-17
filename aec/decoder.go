@@ -13,9 +13,8 @@ type decoder struct {
 	pp, signed     bool
 	msb            bool
 
-	seTable []int
-	rsiBuf  []uint32
-	rsip    int // samples buffered in the current RSI
+	rsiBuf []uint32
+	rsip   int // samples buffered in the current RSI
 
 	br      bitReader
 	dst     []byte
@@ -177,9 +176,9 @@ func (d *decoder) secondExtension(ref int) error {
 		if m > seTableSize {
 			return ErrData
 		}
-		d1 := int32(m) - int32(d.seTable[2*m+1])
+		d1 := int32(m) - int32(seTable[2*m+1])
 		if i&1 == 0 {
-			d.rsiBuf[d.rsip] = uint32(int32(d.seTable[2*m]) - d1)
+			d.rsiBuf[d.rsip] = uint32(int32(seTable[2*m]) - d1)
 			d.rsip++
 			i++
 		}
