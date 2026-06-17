@@ -129,6 +129,27 @@ func TestDifferentialLibaec(t *testing.T) {
 	}
 }
 
+// BenchmarkDecodeLibaecBaseline decodes the same ramp vector with libaec, for a
+// throughput comparison against the pure-Go BenchmarkDecodeRamp. -tags libaec only.
+func BenchmarkDecodeLibaecBaseline(b *testing.B) {
+	vs := loadVectors(b)
+	var stream, want []byte
+	var cfg Config
+	for _, v := range vs {
+		if containsStr(v.Name, "ramp") {
+			want, _ = base64.StdEncoding.DecodeString(v.SamplesB64)
+			stream, _ = base64.StdEncoding.DecodeString(v.StreamB64)
+			cfg = Config{BitsPerSample: v.BitsPerSample, BlockSize: v.BlockSize, RSI: v.RSI, Flags: Flags(v.Flags)}
+			break
+		}
+	}
+	b.SetBytes(int64(len(want)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = aecDecodeC(b, stream, len(want), cfg)
+	}
+}
+
 // TestGenerateVectors regenerates the frozen fixtures. Run explicitly:
 //
 //	go test -tags libaec ./aec/ -run TestGenerateVectors
