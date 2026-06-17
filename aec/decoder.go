@@ -81,8 +81,40 @@ func (d *decoder) uncomp() error {
 	return nil
 }
 
-// split / lowEntropy are implemented in later tasks.
-func (d *decoder) split(k, ref int) error   { return ErrData }
+// split decodes a sample-splitting block with split parameter k (= id-1).
+// libaec stores all encoded_block_size FS high parts first, then all k-bit
+// remainders. When ref==1 the first slot is a raw reference sample.
+func (d *decoder) split(k, ref int) error {
+	if ref == 1 {
+		v, ok := d.br.getBits(d.cfg.BitsPerSample)
+		if !ok {
+			return ErrShortInput
+		}
+		d.rsiBuf[d.rsip] = v
+		d.rsip++
+	}
+	ebs := d.blockSize - ref
+	base := d.rsip
+	for i := 0; i < ebs; i++ {
+		fs, ok := d.br.getFS()
+		if !ok {
+			return ErrShortInput
+		}
+		d.rsiBuf[base+i] = fs << uint(k)
+	}
+	if k > 0 {
+		for i := 0; i < ebs; i++ {
+			rem, ok := d.br.getBits(k)
+			if !ok {
+				return ErrShortInput
+			}
+			d.rsiBuf[base+i] += rem
+		}
+	}
+	d.rsip = base + ebs
+	return nil
+}
+
 func (d *decoder) lowEntropy(ref int) error { return ErrData }
 
 // flush reverses preprocessing (if enabled) over a full RSI buffer and
