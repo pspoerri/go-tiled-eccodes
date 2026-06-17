@@ -13,6 +13,8 @@ type decoder struct {
 	pp, signed     bool
 	msb            bool
 
+	padRSI bool // AEC_PAD_RSI: align bit-stream to byte boundary after each full RSI
+
 	rsiBuf []uint32
 	rsip   int // samples buffered in the current RSI
 
@@ -35,6 +37,9 @@ func (d *decoder) run() error {
 		if d.rsip >= d.rsiSize {
 			d.flush(d.rsiBuf[:d.rsiSize])
 			d.rsip = 0
+			if d.padRSI {
+				d.br.alignToByte()
+			}
 		}
 	}
 	if d.rsip > 0 {

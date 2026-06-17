@@ -2,6 +2,11 @@
 /grib-inspect
 /grib-tile
 
+# Test binaries and profiling outputs
+*.test
+*.out
+/aec/*.out
+
 # OS / editor cruft
 .DS_Store
 *.swp
