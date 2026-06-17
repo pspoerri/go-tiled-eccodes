@@ -4,10 +4,10 @@ GRIB2 decoder built for one job: serving WGS84 (XYZ) tiles out of mmapped
 weather files at low latency. A drop-in replacement for the read side of
 ECMWF [eccodes](https://github.com/ecmwf/eccodes). The common packings
 (simple, complex, spatial differencing, IEEE float, PNG) and every grid
-type are pure Go; JPEG2000 (5.40) and CCSDS (5.42) link `libopenjp2` and
-`libaec` via CGo behind a build tag, so a pure-Go `go build` still
-produces a self-contained binary for archives that don't use those two
-packings.
+type are pure Go; JPEG2000 (5.40) links `libopenjp2` via CGo behind a
+build tag; every other packing — including CCSDS (5.42), now a pure-Go
+port of libaec — is pure Go, so a pure-Go `go build` decodes everything
+except JPEG2000.
 
 ## Why
 
@@ -21,11 +21,10 @@ is immutable after `Open`, so the same message can be rendered from
 many goroutines without locking. This library targets exactly that path:
 
 - **Static binary, single-file deployment by default.** Pure-Go `go build`
-  produces a self-contained binary that runs anywhere Go runs. Two of
-  the rarer Section 5 packings — JPEG2000 (5.40) and CCSDS (5.42) —
-  delegate to system libraries via CGo, so binaries that need those
-  must be built with CGO_ENABLED=1 and the matching shared libs. See
-  *Optional packings* below.
+  produces a self-contained binary that runs anywhere Go runs, decoding
+  all packings except JPEG2000 (5.40) — CCSDS (5.42) is now a pure-Go
+  port of libaec and needs no system library. Only JPEG2000 delegates to
+  `libopenjp2` via CGo; see *Optional packings* below.
 - **mmap by default.** The OS owns the page cache; you don't pay for
   reads on hot tiles. Decoded grids are cached per-message in a
   `sync.Once` so the first tile pays the decode cost once and every
@@ -42,9 +41,9 @@ many goroutines without locking. This library targets exactly that path:
 - **GRIB2 reader** with mmap, lazy message indexing, and
   one-decode-per-message caching.
 - **Seven packing decoders**: simple (5.0), complex (5.2), complex +
-  spatial differencing (5.3), IEEE float (5.4), PNG (5.41) — all
-  pure Go — plus JPEG2000 (5.40) via libopenjp2 and CCSDS (5.42) via
-  libaec, both behind a CGo build tag.
+  spatial differencing (5.3), IEEE float (5.4), PNG (5.41), CCSDS (5.42,
+  pure-Go port of libaec) — all pure Go — plus JPEG2000 (5.40) via
+  libopenjp2 (CGo, behind a build tag).
 - **Seven grid types**: regular lat/lon (3.0), rotated lat/lon (3.1),
   Mercator (3.10), polar stereographic (3.20), Lambert conformal
   (3.30), Gaussian regular & reduced (3.40 with `pl[]` table), and
@@ -95,7 +94,7 @@ many goroutines without locking. This library targets exactly that path:
 | 5.4  | IEEE float                                      | ✅ |
 | 5.40 | JPEG2000                                        | ✅ — via libopenjp2 (CGo) |
 | 5.41 | PNG                                             | ✅ |
-| 5.42 | CCSDS                                           | ✅ — via libaec (CGo) |
+| 5.42 | CCSDS                                           | ✅ — pure Go (port of libaec) |
 
 ### Grid Definition Templates (Section 3)
 | Template | Name | Status |
@@ -115,43 +114,41 @@ go get github.com/pspoerri/go-tiled-eccodes
 ```
 
 Requires Go 1.21+ and `golang.org/x/sys`. No other dependencies for the
-default pure-Go build. To decode JPEG2000 (5.40) or CCSDS (5.42) messages,
-see *Optional packings* below.
+default pure-Go build. To decode JPEG2000 (5.40) messages, see *Optional
+packings* below. CCSDS (5.42) is pure Go — no extra setup required.
 
 ## Optional packings
 
-JPEG2000 and CCSDS are decoded by linking against widely-available system
-libraries — re-implementing them in pure Go would mean porting tens of
-thousands of lines of careful entropy-coding C, well outside the scope of
-this library. They are gated by Go's standard `cgo` build tag.
+JPEG2000 is decoded by linking against a widely-available system library.
+It is gated by Go's standard `cgo` build tag. CCSDS (5.42) is a pure-Go
+port of libaec and requires no system library.
 
 | Packing | Library | Required for |
 |---|---|---|
 | 5.40 JPEG2000 | `libopenjp2` (OpenJPEG 2.x) | DWD ICON-Global pre-2024, ECMWF reanalysis archives |
-| 5.42 CCSDS    | `libaec`                     | ECMWF MARS, some ICON-Global products |
 
-Install the libraries:
+Install the library:
 
 ```sh
 # macOS
-brew install libaec openjpeg
+brew install openjpeg
 
 # Debian/Ubuntu
-apt install libaec-dev libopenjp2-7-dev
+apt install libopenjp2-7-dev
 
 # Fedora/RHEL
-dnf install libaec-devel openjpeg2-devel
+dnf install openjpeg2-devel
 ```
 
 Then build with CGo enabled (the Go default):
 
 ```sh
-go build ./...                    # CGO_ENABLED defaults to 1; both packings included
-CGO_ENABLED=0 go build ./...      # pure-Go build; 5.40 and 5.42 return ErrCgoRequired
+go build ./...                    # CGO_ENABLED defaults to 1; JPEG2000 included
+CGO_ENABLED=0 go build ./...      # pure-Go build; 5.40 returns ErrCgoRequired
 ```
 
-When CGo is off and a message arrives in either format, `DecodeFloat64`
-returns `decode.ErrCgoRequired`. Detect with `errors.Is(err, decode.ErrCgoRequired)`
+When CGo is off and a JPEG2000 message arrives, `DecodeFloat64` returns
+`decode.ErrCgoRequired`. Detect with `errors.Is(err, decode.ErrCgoRequired)`
 and fall back to a pure-Go re-encoding pipeline if your deployment requires
 a fully-static binary.
 

@@ -270,12 +270,12 @@ func (d *decoder) writeSamples(buf []uint32) {
 	dst := d.dst[d.outPos:]
 	switch d.bytesPerSample {
 	case 1:
-		dst = dst[:n] // BCE: prove slice is large enough, eliminate per-element checks
+		dst = dst[:n] // slice-length hint for the compiler
 		for i, v := range buf {
 			dst[i] = byte(v)
 		}
 	case 2:
-		dst = dst[:n*2] // BCE hint
+		dst = dst[:n*2] // slice-length hint for the compiler
 		if d.msb {
 			for i, v := range buf {
 				dst[2*i], dst[2*i+1] = byte(v>>8), byte(v)
@@ -286,7 +286,7 @@ func (d *decoder) writeSamples(buf []uint32) {
 			}
 		}
 	case 3:
-		dst = dst[:n*3] // BCE hint
+		dst = dst[:n*3] // slice-length hint for the compiler
 		if d.msb {
 			for i, v := range buf {
 				dst[3*i], dst[3*i+1], dst[3*i+2] = byte(v>>16), byte(v>>8), byte(v)
@@ -297,7 +297,7 @@ func (d *decoder) writeSamples(buf []uint32) {
 			}
 		}
 	case 4:
-		dst = dst[:n*4] // BCE hint
+		dst = dst[:n*4] // slice-length hint for the compiler
 		if d.msb {
 			for i, v := range buf {
 				dst[4*i], dst[4*i+1], dst[4*i+2], dst[4*i+3] = byte(v>>24), byte(v>>16), byte(v>>8), byte(v)
