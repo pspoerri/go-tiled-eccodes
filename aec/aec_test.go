@@ -154,6 +154,56 @@ func TestUncompNoPP(t *testing.T) {
 	}
 }
 
+// TestSplitNoPP: id selects k-split. id_len=3, so id in 1..6 -> k=id-1.
+// Use id=3 -> k=2. block_size=4, no preprocessing, 8-bit. For each sample:
+// high part fs (unary, fs zeros then 1) and 2-bit remainder; sample=(fs<<2)|rem.
+func TestSplitNoPP(t *testing.T) {
+	cfg := Config{BitsPerSample: 8, BlockSize: 4, RSI: 4, Flags: 0}
+	fs := []uint32{0, 1, 2, 0}                               // high parts
+	rem := []uint32{1, 2, 3, 0}                              // 2-bit low parts
+	want := []uint32{0<<2 | 1, 1<<2 | 2, 2<<2 | 3, 0<<2 | 0} // 1,6,11,0
+	var bw bitWriter
+	bw.put(3, 3)           // id=3 -> k=2
+	for _, f := range fs { // FS: f zeros then a 1
+		bw.put(1, int(f)+1)
+	}
+	for _, r := range rem {
+		bw.put(r, 2)
+	}
+	dst := make([]byte, 4)
+	n, err := Decode(dst, bw.bytes(), cfg)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := dst[:n]
+	for i := range want {
+		if uint32(got[i]) != want[i] {
+			t.Fatalf("sample %d = %d, want %d", i, got[i], want[i])
+		}
+	}
+}
+
+// TestSplitK0NoPP: id=1 -> k=0 (pure fundamental sequence, no remainder bits).
+func TestSplitK0NoPP(t *testing.T) {
+	cfg := Config{BitsPerSample: 8, BlockSize: 4, RSI: 4, Flags: 0}
+	fs := []uint32{5, 0, 3, 7}
+	var bw bitWriter
+	bw.put(1, 3) // id=1 -> k=0
+	for _, f := range fs {
+		bw.put(1, int(f)+1)
+	}
+	dst := make([]byte, 4)
+	n, err := Decode(dst, bw.bytes(), cfg)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for i, f := range fs {
+		if uint32(dst[:n][i]) != f {
+			t.Fatalf("sample %d = %d, want %d", i, dst[i], f)
+		}
+	}
+}
+
 // TestUncompPPUnsigned: preprocessing on, unsigned 16-bit. First sample is the
 // raw reference; subsequent stored values are mapped residuals reversed by the
 // predictor. We pick residuals that stay in range so the zig-zag branch applies.
