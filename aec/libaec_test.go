@@ -7,6 +7,7 @@ package aec
 // first (macOS: `brew install libaec`).
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"math/rand"
@@ -115,7 +116,7 @@ func TestDifferentialLibaec(t *testing.T) {
 				t.Fatalf("go decode: %v", err)
 			}
 			cOut := aecDecodeC(t, stream, len(want), cfg)
-			if n != len(cOut) || string(goOut[:n]) != string(cOut) {
+			if n != len(cOut) || !bytes.Equal(goOut[:n], cOut) {
 				// Find first differing byte for a useful message.
 				for i := 0; i < len(cOut) && i < n; i++ {
 					if goOut[i] != cOut[i] {
