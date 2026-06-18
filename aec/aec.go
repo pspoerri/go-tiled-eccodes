@@ -34,17 +34,43 @@ type Config struct {
 
 // Exported errors. They wrap the libaec failure modes.
 var (
-	ErrConfig      = errors.New("aec: invalid configuration")
-	ErrData        = errors.New("aec: malformed bitstream")
-	ErrShortInput  = errors.New("aec: input ended before all samples were decoded")
-	ErrShortOutput = errors.New("aec: dst too small for decoded samples")
+	ErrConfig     = errors.New("aec: invalid configuration")
+	ErrData       = errors.New("aec: malformed bitstream")
+	ErrShortInput = errors.New("aec: input ended before all samples were decoded")
 )
+
+// SampleBytes returns the storage width in bytes (1, 2, 3, or 4) that Decode
+// uses for one sample under cfg: 1 for BitsPerSample ≤ 8, 2 for ≤ 16, 3 for
+// 17–24 when Data3Byte is set, else 4. It mirrors libaec's storage-width rule.
+func SampleBytes(cfg Config) int {
+	switch {
+	case cfg.BitsPerSample <= 8:
+		return 1
+	case cfg.BitsPerSample <= 16:
+		return 2
+	case cfg.BitsPerSample <= 24 && cfg.Flags&Data3Byte != 0:
+		return 3
+	default:
+		return 4
+	}
+}
+
+// DecodedSize returns the exact length dst must have for Decode to emit
+// numSamples samples under cfg: numSamples * SampleBytes(cfg).
+func DecodedSize(numSamples int, cfg Config) int {
+	return numSamples * SampleBytes(cfg)
+}
 
 // Decode decodes the AEC bitstream src into dst, writing BitsPerSample-wide
 // samples in the byte layout libaec produces: storage width 1/2/3/4 bytes
 // (per BitsPerSample and Data3Byte), big-endian iff DataMSB else
-// little-endian. It returns the number of bytes written. dst must be large
-// enough for all samples it can decode from src; Decode never grows dst.
+// little-endian. It returns the number of bytes written.
+//
+// len(dst) determines how many samples Decode attempts to read: exactly
+// len(dst)/SampleBytes(cfg). Size dst with DecodedSize(numSamples, cfg) — pass
+// the exact length, not a larger buffer. An oversized dst makes Decode read
+// past the end of the stream and return ErrShortInput; an undersized dst
+// simply yields fewer samples. Decode never grows dst.
 func Decode(dst, src []byte, cfg Config) (int, error) {
 	d, err := newDecoder(dst, src, cfg)
 	if err != nil {

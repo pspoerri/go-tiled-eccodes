@@ -26,7 +26,7 @@ func TestConfigValidation(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := newDecoder(make([]byte, 1<<16), []byte{0, 0, 0, 0}, c.cfg)
-			if !errors.Is(err, c.want) && err != c.want {
+			if !errors.Is(err, c.want) {
 				t.Fatalf("newDecoder err = %v, want %v", err, c.want)
 			}
 		})

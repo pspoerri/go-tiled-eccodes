@@ -20,10 +20,9 @@ type decoder struct {
 
 	br      bitReader
 	dst     []byte
-	outPos  int    // bytes written to dst
-	needed  int    // total samples to emit
-	emitted int    // samples emitted
-	lastOut uint32 // predictor carry
+	outPos  int // bytes written to dst
+	needed  int // total samples to emit
+	emitted int // samples emitted
 }
 
 // run drives the block loop until enough samples are decoded to fill dst,
@@ -259,7 +258,6 @@ func (d *decoder) flush(buf []uint32) {
 			buf[i] = data
 		}
 	}
-	d.lastOut = data
 	d.writeSamples(buf[:n])
 }
 
