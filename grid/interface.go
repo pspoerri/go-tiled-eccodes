@@ -37,8 +37,26 @@ type Grid interface {
 }
 
 // wrap360 normalises lon into [base, base+360).
+//
+// In the tile-render hot path lon is at most one period out of range (it comes
+// from a pixel's spherical-Mercator longitude against the grid's base), so the
+// common case is resolved with one comparison and at most one ±360 add —
+// avoiding math.Mod, which dominated the per-pixel coordinate cost. math.Mod is
+// used only as the fallback for longitudes more than one period out of range.
 func wrap360(lon, base float64) float64 {
-	x := math.Mod(lon-base, 360)
+	x := lon - base
+	if x >= 0 {
+		if x < 360 {
+			return lon // already in [base, base+360)
+		}
+		if x < 720 {
+			return lon - 360
+		}
+	} else if x >= -360 {
+		return lon + 360
+	}
+	// Far out of range: full reduction.
+	x = math.Mod(x, 360)
 	if x < 0 {
 		x += 360
 	}
