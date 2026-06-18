@@ -101,10 +101,18 @@ func CCSDS(template, data []byte, numPoints int, dst []float64) ([]float64, erro
 			dst[i] = bias + x*mul
 		}
 	case 3:
-		// 24-bit samples (AEC_DATA_3BYTE). Always MSB-first per CCSDS.
+		// 24-bit samples (AEC_DATA_3BYTE). Byte order follows AEC_DATA_MSB just
+		// like the 2- and 4-byte widths (libaec has both put_msb_24 and
+		// put_lsb_24). eccodes always sets AEC_DATA_MSB for GRIB CCSDS, but we
+		// honor the flag so the path is correct for any libaec stream.
 		for i := 0; i < numPoints; i++ {
 			off := i * 3
-			u := uint32(rawOut[off])<<16 | uint32(rawOut[off+1])<<8 | uint32(rawOut[off+2])
+			var u uint32
+			if msbFirst {
+				u = uint32(rawOut[off])<<16 | uint32(rawOut[off+1])<<8 | uint32(rawOut[off+2])
+			} else {
+				u = uint32(rawOut[off]) | uint32(rawOut[off+1])<<8 | uint32(rawOut[off+2])<<16
+			}
 			x := float64(u)
 			if signed && u&0x800000 != 0 {
 				x = float64(int32(u | 0xff000000))
