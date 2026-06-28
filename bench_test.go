@@ -111,6 +111,52 @@ func BenchmarkRenderTile256BicubicWarm(b *testing.B) {
 	}
 }
 
+// BenchmarkDecodeNaturalWarm measures the natural-order reorder over the warm
+// cache on the 1215x746 icon-d2 grid (S→N scan, so every read goes through the
+// Index reorder path). BenchmarkDecodeFloat32Warm is the straight-copy baseline
+// over the same cache — the delta is the cost of un-scrambling the scan.
+func BenchmarkDecodeNaturalWarm(b *testing.B) {
+	path := loadTestdata(b, "icon-d2_t_2m.grib2")
+	f, err := grib.Open(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer f.Close()
+	m := f.Messages()[0]
+	if _, err := m.DecodeFloat64(nil); err != nil { // warm the cache
+		b.Fatal(err)
+	}
+	dst := make([]float32, 1215*746)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := m.DecodeNaturalFloat32(dst); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDecodeFloat32Warm(b *testing.B) {
+	path := loadTestdata(b, "icon-d2_t_2m.grib2")
+	f, err := grib.Open(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer f.Close()
+	m := f.Messages()[0]
+	if _, err := m.DecodeFloat64(nil); err != nil { // warm the cache
+		b.Fatal(err)
+	}
+	dst := make([]float32, 1215*746)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := m.DecodeFloat32(dst); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkValueAtWarm(b *testing.B) {
 	path := loadTestdata(b, "icon-d2_t_2m.grib2")
 	f, err := grib.Open(path)

@@ -234,6 +234,12 @@ func (g *Unstructured) SetCoordinatesFrom(other *Unstructured) error {
 // HasCoordinates reports whether SetCoordinates has been called.
 func (g *Unstructured) HasCoordinates() bool { return g.lats != nil }
 
+// Coordinates returns the per-cell (lat, lon) arrays attached via
+// SetCoordinates, or (nil, nil) if none are set. The slices are the grid's own
+// backing storage indexed by cell number — read-only; callers must not mutate
+// them while Locate is in flight.
+func (g *Unstructured) Coordinates() (lats, lons []float64) { return g.lats, g.lons }
+
 // SetCellMask attaches a per-cell boolean mask. Masked cells (mask[i]==true)
 // behave as out-of-bounds during Locate, so any pixel whose nearest neighbor
 // is a masked cell renders as NaN. Pass nil to clear an existing mask.

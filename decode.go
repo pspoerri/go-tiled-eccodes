@@ -6,9 +6,12 @@ import (
 	"github.com/pspoerri/go-tiled-eccodes/decode"
 )
 
-// DecodeFloat64 returns the message's grid as a contiguous []float64 in
-// natural scanning order (W→E rows, N→S). The first call decodes; subsequent
-// calls reuse the cached buffer (the cache is invalidated by File.Close).
+// DecodeFloat64 returns the message's grid as a contiguous []float64 in the
+// message's own storage (scanning) order — the order Section 7 packs the
+// values, which follows the scanning-mode bits. For a grid whose scan is not
+// natural this is NOT W→E/N→S; use DecodeNatural when you need guaranteed
+// natural order. The first call decodes; subsequent calls reuse the cached
+// buffer (the cache is invalidated by File.Close).
 //
 // Caller may pass dst to receive a copy of the cached values; if dst is nil
 // or undersized, a new slice is returned. The returned slice is owned by the
@@ -56,11 +59,13 @@ func (m *Message) decodeCached() ([]float64, error) {
 
 // decodeNow runs the actual Section 5 → Section 7 decode for the message,
 // applying the bitmap (Section 6) if one is present. The returned slice is in
-// the *natural* scanning order — i.e. always W→E within each row, rows N→S.
+// the message's *storage* (scan) order: values come out of Section 7 in the
+// order the scanning-mode bits define and decode does not re-order them.
 //
-// Why we re-order here rather than at index time: the caller's lat/lon →
-// (i,j) mapping is naturally oriented; pushing the un-scrambling into decode
-// means the grid type only has to know the natural order.
+// Why we keep storage order rather than un-scrambling here: the renderer's
+// source closure routes (i, j) → buffer offset through Grid.Index, so the
+// fast path stays zero-copy. DecodeNatural is the accessor that materialises a
+// natural-order (W→E, N→S) copy for callers that want one.
 func (m *Message) decodeNow() ([]float64, error) {
 	g, err := m.Grid()
 	if err != nil {
@@ -106,7 +111,7 @@ func (m *Message) decodeNow() ([]float64, error) {
 	// scanning modes.
 	//
 	// When no bitmap is present, packed is already the full nTotal-sized
-	// natural-order buffer — return it directly rather than allocating an
+	// storage-order buffer — return it directly rather than allocating an
 	// 8 MB copy via ApplyBitmap. This is the common path for files without
 	// missing values and saves one large allocation per cold decode.
 	if bitmap == nil {

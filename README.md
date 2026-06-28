@@ -219,11 +219,20 @@ func (f *File) Close() error
 func (m *Message) Header() Header
 func (m *Message) Grid() (grid.Grid, error)
 
-// Decode the full grid into the natural scanning order. The first call
-// decodes; subsequent calls return a copy of the cached buffer. Pass
+// Decode the full grid in the message's own storage (scan) order. The first
+// call decodes; subsequent calls return a copy of the cached buffer. Pass
 // dst to reuse a buffer.
 func (m *Message) DecodeFloat32(dst []float32) ([]float32, error)
 func (m *Message) DecodeFloat64(dst []float64) ([]float64, error)
+
+// Normalized regular lat/lon access. RegularLatLon resolves the WMO scan bits
+// into a grid-def with signed steps (DLat<0 N→S, DLon>0 W→E) anchored at the
+// NW grid point; ok=false for non-template-3.0 grids. DecodeNatural* fills dst
+// in guaranteed natural order (W→E within rows, rows N→S), pairing 1:1 with
+// that grid-def — value[row*Nx+col] is at (Lat0+row*DLat, Lon0+col*DLon).
+func (m *Message) RegularLatLon() (RegularLatLon, bool)
+func (m *Message) DecodeNaturalFloat32(dst []float32) ([]float32, error)
+func (m *Message) DecodeNaturalFloat64(dst []float64) ([]float64, error)
 
 // Single-point lookup at WGS84 (lat, lon).
 func (m *Message) ValueAt(lat, lon float64, mode tile.SampleMode) (float64, error)

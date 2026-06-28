@@ -37,6 +37,22 @@ func TestUnstructuredParseTemplate(t *testing.T) {
 	if g.HasCoordinates() {
 		t.Errorf("HasCoordinates true on freshly-parsed grid")
 	}
+	if lats, lons := g.Coordinates(); lats != nil || lons != nil {
+		t.Errorf("Coordinates non-nil before SetCoordinates: %v %v", lats, lons)
+	}
+}
+
+func TestUnstructuredCoordinates(t *testing.T) {
+	g := ParseUnstructured(make([]byte, 36), 3)
+	lats := []float64{1, 2, 3}
+	lons := []float64{4, 5, 6}
+	if err := g.SetCoordinates(lats, lons); err != nil {
+		t.Fatalf("SetCoordinates: %v", err)
+	}
+	gotLats, gotLons := g.Coordinates()
+	if &gotLats[0] != &lats[0] || &gotLons[0] != &lons[0] {
+		t.Error("Coordinates did not return the backing slices")
+	}
 }
 
 func TestUnstructuredNearestMatchesBruteForce(t *testing.T) {
