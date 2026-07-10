@@ -25,11 +25,11 @@ import (
 //	11     octets for optional list of numbers (=0)
 //	12     interpretation of list of numbers (=0)
 //	13-14  grid definition template number (=101)
-//	15-50  template body (36 bytes)
+//	15-35  template body (21 bytes)
 func buildSection3Unstructured(numPoints uint32, shapeCode byte) []byte {
 	const (
 		header = 14
-		body   = 36
+		body   = 21
 	)
 	raw := make([]byte, header+body)
 	binary.BigEndian.PutUint32(raw[0:], uint32(header+body))

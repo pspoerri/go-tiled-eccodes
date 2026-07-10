@@ -247,7 +247,8 @@ func (m *Message) parseGrid() (grid.Grid, error) {
 	case 50:
 		minimum = 14
 	case 101:
-		minimum = 36
+		// Shape (1) + grid number (3) + reference number (1) + UUID (16).
+		minimum = 21
 	default:
 		return nil, ErrUnsupportedGrid
 	}

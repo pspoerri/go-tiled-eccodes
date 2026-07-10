@@ -7,26 +7,26 @@ import (
 )
 
 func TestUnstructuredParseTemplate(t *testing.T) {
-	// Synthetic template-101 body: 36 bytes. Shape-of-earth = 6 (radius
-	// 6371229 m), grid-used = 7, grid-reference = 0x0a0b0c, UUID = "icon-d2-2a1b…"
-	body := make([]byte, 36)
+	// Synthetic template-101 body: shape (1), grid-used (3),
+	// grid-reference (1), UUID (16).
+	body := make([]byte, 21)
 	body[0] = 6
-	body[16] = 7
-	body[17] = 0x0a
-	body[18] = 0x0b
-	body[19] = 0x0c
+	body[1] = 0x0a
+	body[2] = 0x0b
+	body[3] = 0x0c
+	body[4] = 7
 	for i := 0; i < 16; i++ {
-		body[20+i] = byte(i + 1)
+		body[5+i] = byte(i + 1)
 	}
 	g := ParseUnstructured(body, 100)
 	if g.NumPoints_ != 100 {
 		t.Errorf("NumPoints = %d, want 100", g.NumPoints_)
 	}
-	if g.GridUsed != 7 {
-		t.Errorf("GridUsed = %d, want 7", g.GridUsed)
+	if g.GridUsed != 0x000a0b0c {
+		t.Errorf("GridUsed = %#x, want 0x000a0b0c", g.GridUsed)
 	}
-	if g.GridReference != 0x000a0b0c {
-		t.Errorf("GridReference = %#x, want 0x000a0b0c", g.GridReference)
+	if g.GridReference != 7 {
+		t.Errorf("GridReference = %d, want 7", g.GridReference)
 	}
 	if g.UUID[0] != 1 || g.UUID[15] != 16 {
 		t.Errorf("UUID = %v", g.UUID)

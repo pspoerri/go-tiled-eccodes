@@ -4,8 +4,6 @@ import (
 	"errors"
 	"math"
 	"sync"
-
-	"github.com/pspoerri/go-tiled-eccodes/internal/bswap"
 )
 
 // Unstructured is Grid Definition Template 3.101 — General Unstructured Grid.
@@ -21,15 +19,9 @@ import (
 // Template body offsets (zero-based bytes, starting at Section 3 byte 14):
 //
 //	0      shape of earth
-//	1      scale factor of radius of spherical earth
-//	2-5    scaled value of radius
-//	6      scale factor of major axis
-//	7-10   scaled value of major axis
-//	11     scale factor of minor axis
-//	12-15  scaled value of minor axis
-//	16     number of grid used
-//	17-19  number of grid reference (3 octets)
-//	20-35  UUID of horizontal grid (16 octets)
+//	1-3    number of grid used (3 octets)
+//	4      number of grid in reference
+//	5-20   UUID of horizontal grid (16 octets)
 //
 // Storage: values are stored in a 1-D buffer of NumberOfDataPoints entries,
 // one per cell, in the cell-numbering order of the reference mesh. There is
@@ -38,8 +30,8 @@ import (
 // every read goes through Index(i, j).
 type Unstructured struct {
 	NumPoints_    int
-	GridUsed      uint8
-	GridReference uint32
+	GridUsed      uint32
+	GridReference uint8
 	UUID          [16]byte
 	ShapeOfEarth  uint8
 
@@ -115,44 +107,23 @@ func ParseUnstructured(t []byte, numPoints int) *Unstructured {
 		NumPoints_:        numPoints,
 		EarthRadiusMeters: earthRadiusMeters,
 	}
-	if len(t) >= 36 {
+	if len(t) >= 21 {
 		g.ShapeOfEarth = t[0]
-		g.GridUsed = t[16]
-		g.GridReference = uint32(t[17])<<16 | uint32(t[18])<<8 | uint32(t[19])
-		copy(g.UUID[:], t[20:36])
+		g.GridUsed = uint32(t[1])<<16 | uint32(t[2])<<8 | uint32(t[3])
+		g.GridReference = t[4]
+		copy(g.UUID[:], t[5:21])
 	}
-	if r := earthRadiusFromShape(t); r > 0 {
-		g.EarthRadiusMeters = r
+	// Template 3.101 carries only the shape code, not the scaled radius or
+	// ellipsoid fields present in other grid templates.
+	switch g.ShapeOfEarth {
+	case 0:
+		g.EarthRadiusMeters = 6367470
+	case 6:
+		g.EarthRadiusMeters = 6371229
+	case 8:
+		g.EarthRadiusMeters = 6371200
 	}
 	return g
-}
-
-// earthRadiusFromShape returns the sphere radius for shape-of-earth codes
-// that specify a sphere (codes 0, 1, 6, 8). For ellipsoids and "user defined"
-// shapes (2, 3, 7, 9) we fall back to the GRIB default of 6371229 m — the
-// difference vs WGS84 is sub-1% and our rendering cares about ranking nearest
-// neighbors, not metre-accurate distance.
-func earthRadiusFromShape(t []byte) float64 {
-	if len(t) < 6 {
-		return 0
-	}
-	switch t[0] {
-	case 0:
-		return 6367470 // spherical earth, radius 6,367,470 m
-	case 1:
-		// scaled value of radius of spherical earth
-		sf := int8(t[1])
-		v := bswap.U32(t, 2)
-		if v == 0 || v == 0xffffffff {
-			return 0
-		}
-		return float64(v) * math.Pow10(-int(sf))
-	case 6:
-		return 6371229
-	case 8:
-		return 6371200
-	}
-	return 0
 }
 
 func (g *Unstructured) Size() (int, int) { return g.NumPoints_, 1 }
