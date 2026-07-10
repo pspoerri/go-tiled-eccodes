@@ -29,6 +29,9 @@ func (r rectScan) Index(i, j int) int {
 		sj = r.Ny - 1 - j
 	}
 	if !r.Consecutive {
+		if r.Alternate && (si&1) == 1 {
+			sj = r.Ny - 1 - sj
+		}
 		return si*r.Ny + sj
 	}
 	if r.Alternate && (sj&1) == 1 {

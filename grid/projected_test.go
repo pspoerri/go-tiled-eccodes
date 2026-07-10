@@ -247,3 +247,27 @@ func TestParseProjScan(t *testing.T) {
 		t.Errorf("parseProjScan(0xf0) wrong")
 	}
 }
+
+func TestAlternatingColumnMajorIndex(t *testing.T) {
+	ll := LatLon{
+		Ni: 3, Nj: 4,
+		IPositive: true, Consecutive: false, Alternate: true,
+	}
+	if got := ll.Index(0, 0); got != 0 {
+		t.Errorf("first column Index(0,0) = %d, want 0", got)
+	}
+	if got := ll.Index(1, 0); got != 7 {
+		t.Errorf("reversed second column Index(1,0) = %d, want 7", got)
+	}
+	if got := ll.Index(1, 3); got != 4 {
+		t.Errorf("reversed second column Index(1,3) = %d, want 4", got)
+	}
+
+	r := rectScan{
+		Nx: 3, Ny: 4,
+		IPositive: true, Consecutive: false, Alternate: true,
+	}
+	if got := r.Index(1, 0); got != 7 {
+		t.Errorf("projected reversed second column Index(1,0) = %d, want 7", got)
+	}
+}

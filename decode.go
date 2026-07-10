@@ -51,6 +51,9 @@ func (m *Message) DecodeFloat32(dst []float32) ([]float32, error) {
 // decodeCached lazily decodes the message and caches the resulting []float64
 // for reuse by ValueAt and tile renderers.
 func (m *Message) decodeCached() ([]float64, error) {
+	m.bitmapMu.Lock()
+	m.decodeStarted = true
+	m.bitmapMu.Unlock()
 	m.once.Do(func() {
 		m.cached, m.decErr = m.decodeNow()
 	})
@@ -97,6 +100,10 @@ func (m *Message) decodeNow() ([]float64, error) {
 		packed, err = decode.PNG(tmpl, data, nset, nil)
 	case 42:
 		packed, err = decode.CCSDS(tmpl, data, nset, nil)
+	case 50:
+		packed, err = decode.SpectralSimple(tmpl, data, nset, nil)
+	case 61:
+		packed, err = decode.LogPreprocessed(tmpl, data, nset, nil)
 	default:
 		return nil, ErrUnsupportedPacking
 	}
@@ -152,6 +159,30 @@ func (m *Message) bitmapAndCount(nTotal int) ([]byte, int, error) {
 		// 254 with no preceding bitmap, which is malformed.
 		return nil, 0, ErrUnsupportedTemplate
 	default:
+		if indicator := m.S6.Indicator(); indicator >= 1 && indicator <= 253 {
+			m.bitmapMu.Lock()
+			bm := m.predefinedBitmap
+			m.bitmapMu.Unlock()
+			if bm == nil {
+				return nil, 0, ErrPredefinedBitmap
+			}
+			if len(bm) < (nTotal+7)>>3 {
+				return nil, 0, ErrTruncated
+			}
+			return bm[:(nTotal+7)>>3], bitmapPopulation(bm, nTotal), nil
+		}
 		return nil, 0, ErrUnsupportedTemplate
 	}
+}
+
+func bitmapPopulation(bitmap []byte, n int) int {
+	count := 0
+	for i := 0; i < n>>3; i++ {
+		count += bits.OnesCount8(bitmap[i])
+	}
+	if rem := n & 7; rem != 0 {
+		mask := byte(0xff) << uint(8-rem)
+		count += bits.OnesCount8(bitmap[n>>3] & mask)
+	}
+	return count
 }

@@ -30,6 +30,7 @@ import (
 type Lambert struct {
 	rectScan
 	La1, Lo1 float64
+	Earth    Earth
 	LaD, LoV float64
 	Dx, Dy   float64 // metres
 	Latin1   float64
@@ -41,6 +42,7 @@ type Lambert struct {
 
 func ParseLambert(t []byte) Lambert {
 	g := Lambert{}
+	g.Earth = ParseEarth(t)
 	g.Nx = int(bswap.U32(t, 16))
 	g.Ny = int(bswap.U32(t, 20))
 	g.La1 = float64(bswap.I32SM(t, 24)) / 1e6
@@ -73,7 +75,7 @@ func ParseLambert(t []byte) Lambert {
 // project returns Lambert (x, y) in metres for a (lat, lon).
 func (g Lambert) project(lat, lon float64) (x, y float64) {
 	phi := lat * deg2rad
-	rho := earthRadiusMeters * g.F / math.Pow(math.Tan(math.Pi/4+phi/2), g.n)
+	rho := g.Earth.EffectiveRadius() * g.F / math.Pow(math.Tan(math.Pi/4+phi/2), g.n)
 	theta := g.n * (lon - g.LoV) * deg2rad
 	x = rho * math.Sin(theta)
 	y = -rho * math.Cos(theta)

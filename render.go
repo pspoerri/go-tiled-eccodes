@@ -226,6 +226,21 @@ func rectLayout(g gridpkg.Grid) (rect, bool) {
 			return rect{}, false
 		}
 		return rect{gg.Ni, len(gg.Lats), gg.IPositive, gg.JPositive, gg.Consecutive, gg.Alternate}, true
+	case gridpkg.RotatedGaussian:
+		if gg.Reduced {
+			return rect{}, false
+		}
+		return rect{gg.Ni, len(gg.Lats), gg.IPositive, gg.JPositive, gg.Consecutive, gg.Alternate}, true
+	case gridpkg.StretchedGaussian:
+		if gg.Reduced {
+			return rect{}, false
+		}
+		return rect{gg.Ni, len(gg.Lats), gg.IPositive, gg.JPositive, gg.Consecutive, gg.Alternate}, true
+	case gridpkg.StretchedRotatedGaussian:
+		if gg.Reduced {
+			return rect{}, false
+		}
+		return rect{gg.Ni, len(gg.Lats), gg.IPositive, gg.JPositive, gg.Consecutive, gg.Alternate}, true
 	}
 	return rect{}, false
 }

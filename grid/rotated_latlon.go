@@ -8,8 +8,7 @@ import (
 
 // RotatedLatLon is Grid Definition Template 3.1 — rotated latitude/longitude.
 //
-// Identical to 3.0 plus three trailing fields (sign-magnitude int32, encoded
-// the same way as La/Lo):
+// Identical to 3.0 plus two scaled coordinates and an IEEE-754 angle:
 //
 //	bytes 58-61  latitude of southern pole (rotated frame)
 //	bytes 62-65  longitude of southern pole
@@ -33,8 +32,8 @@ func ParseRotatedLatLon(t []byte) RotatedLatLon {
 	}
 	scale := angleScale(t)
 	g.SouthPoleLat = float64(bswap.I32SM(t, 58)) / scale
-	g.SouthPoleLon = float64(bswap.I32SM(t, 62)) / scale
-	g.Angle = float64(bswap.I32SM(t, 66)) / scale
+	g.SouthPoleLon = float64(bswap.U32(t, 62)) / scale
+	g.Angle = float64(bswap.F32(t, 66))
 	return g
 }
 

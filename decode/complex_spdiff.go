@@ -30,13 +30,20 @@ import (
 //
 // Final physical value uses the same Y = (R + Y * 2^E) / 10^D formula as 5.2.
 func ComplexSpatialDifferencing(template, data []byte, nset int, dst []float64) ([]float64, error) {
-	h := parseComplexHeader(template)
-	order := int(template[36])
-	ed := int(template[37])
-	if order != 1 && order != 2 {
+	if len(template) < 38 || nset < 0 {
 		return nil, ErrBadComplexStream
 	}
-	if ed < 1 || ed > 4 {
+	h, err := parseComplexHeader(template)
+	if err != nil {
+		return nil, err
+	}
+	order := int(template[36])
+	ed := int(template[37])
+	if (order != 1 && order != 2) || ed < 1 || ed > 4 || nset < order {
+		return nil, ErrBadComplexStream
+	}
+	descriptorBytes := (order + 1) * ed
+	if descriptorBytes > len(data) {
 		return nil, ErrBadComplexStream
 	}
 
@@ -47,7 +54,7 @@ func ComplexSpatialDifferencing(template, data []byte, nset int, dst []float64) 
 		initial[i] = readSM(data[i*ed : (i+1)*ed])
 	}
 	overallMin := readSM(data[order*ed : (order+1)*ed])
-	stream := data[(order+1)*ed:]
+	stream := data[descriptorBytes:]
 
 	// Per eccodes/grib_accessor_class_data_g22order_packing.c, the inner
 	// 5.2 stream encodes N (not N-order) values: the first `order` slots are

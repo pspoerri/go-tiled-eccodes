@@ -24,6 +24,15 @@ func I16SM(b []byte, off int) int16 {
 	return int16(v)
 }
 
+// I8SM decodes an 8-bit GRIB sign-magnitude integer.
+func I8SM(b []byte, off int) int8 {
+	v := b[off]
+	if v&0x80 != 0 {
+		return -int8(v & 0x7f)
+	}
+	return int8(v)
+}
+
 // I32SM decodes a 32-bit GRIB sign-magnitude integer.
 func I32SM(b []byte, off int) int32 {
 	v := U32(b, off)

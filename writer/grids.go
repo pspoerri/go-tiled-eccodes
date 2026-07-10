@@ -84,6 +84,9 @@ func (s Scan) RectIndex(ni, nj, i, j int) int {
 		sj = nj - 1 - j
 	}
 	if !s.Consecutive {
+		if s.Alternate && (si&1) == 1 {
+			sj = nj - 1 - sj
+		}
 		return si*nj + sj
 	}
 	if s.Alternate && (sj&1) == 1 {
@@ -100,8 +103,8 @@ func PutI16SM(b []byte, v int16) { putI16SM(b, v) }
 // PutI32SM encodes a signed integer as a 32-bit GRIB sign-magnitude field.
 func PutI32SM(b []byte, v int32) { putI32SM(b, v) }
 
-// PutAngle writes a degrees value as the sign-magnitude micro-degrees the
-// WMO grid templates use for latitudes, longitudes and rotation angles.
+// PutAngle writes degrees as sign-magnitude micro-degrees for scaled angular
+// coordinates. IEEE-754 rotation-angle fields must be written separately.
 func PutAngle(b []byte, deg float64) {
 	putI32SM(b, int32(math.Round(deg*1e6)))
 }
@@ -201,7 +204,7 @@ func (g RotatedLatLon) EncodeTemplate() []byte {
 	copy(out, body)
 	PutAngle(out[58:], g.SouthPoleLat)
 	PutAngle(out[62:], g.SouthPoleLon)
-	PutAngle(out[66:], g.Angle)
+	binary.BigEndian.PutUint32(out[66:], math.Float32bits(float32(g.Angle)))
 	return out
 }
 

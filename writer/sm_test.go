@@ -111,3 +111,44 @@ func TestPutAngleVariants(t *testing.T) {
 		t.Errorf("PutAngle(45.5) = %#x, want %#x", got, want)
 	}
 }
+
+func TestPutI8SM(t *testing.T) {
+	for _, tc := range []struct {
+		value int8
+		want  byte
+	}{
+		{value: 0, want: 0x00},
+		{value: 2, want: 0x02},
+		{value: -2, want: 0x82},
+	} {
+		b := []byte{0}
+		putI8SM(b, tc.value)
+		if b[0] != tc.want {
+			t.Errorf("putI8SM(%d) = %#x, want %#x", tc.value, b[0], tc.want)
+		}
+	}
+}
+
+func TestEncodeSection4UsesSignMagnitude(t *testing.T) {
+	f := Field{
+		ForecastTime:            -6,
+		ScaleFactorFirstSurface: -2,
+	}
+	s := encodeSection4(f)
+	if got := binary.BigEndian.Uint32(s[18:22]); got != 0x80000006 {
+		t.Errorf("forecast time bytes = %#x, want 0x80000006", got)
+	}
+	if got := s[23]; got != 0x82 {
+		t.Errorf("surface scale factor byte = %#x, want 0x82", got)
+	}
+}
+
+func TestScanRectIndexAlternatingColumns(t *testing.T) {
+	s := Scan{IPositive: true, Consecutive: false, Alternate: true}
+	if got := s.RectIndex(3, 4, 1, 0); got != 7 {
+		t.Errorf("RectIndex(1,0) = %d, want 7", got)
+	}
+	if got := s.RectIndex(3, 4, 1, 3); got != 4 {
+		t.Errorf("RectIndex(1,3) = %d, want 4", got)
+	}
+}

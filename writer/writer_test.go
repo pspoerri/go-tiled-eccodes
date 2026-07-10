@@ -362,6 +362,7 @@ func TestProjectionRotatedLatLon_ICONCH(t *testing.T) {
 		-43.0, 10.0, // rotated south pole geographic coords
 	)
 	vals := linearField(ni, nj, 270)
+	g.Angle = 12.5
 	data, err := writer.Single(baseField(g, vals))
 	if err != nil {
 		t.Fatalf("Single: %v", err)
@@ -379,6 +380,9 @@ func TestProjectionRotatedLatLon_ICONCH(t *testing.T) {
 	}
 	if math.Abs(rg.SouthPoleLat-(-43.0)) > 1e-6 || math.Abs(rg.SouthPoleLon-10.0) > 1e-6 {
 		t.Errorf("south pole = (%v, %v), want (-43, 10)", rg.SouthPoleLat, rg.SouthPoleLon)
+	}
+	if rg.Angle != 12.5 {
+		t.Errorf("rotation angle = %v, want 12.5", rg.Angle)
 	}
 	got, err := msgs[0].DecodeFloat64(nil)
 	if err != nil {

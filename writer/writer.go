@@ -255,9 +255,9 @@ func encodeSection4(f Field) []byte {
 		utr = 1 // hours
 	}
 	t[8] = utr
-	binary.BigEndian.PutUint32(t[9:], uint32(f.ForecastTime))
+	putI32SM(t[9:], f.ForecastTime)
 	t[13] = f.TypeOfFirstFixedSurface
-	t[14] = byte(f.ScaleFactorFirstSurface)
+	putI8SM(t[14:], f.ScaleFactorFirstSurface)
 	binary.BigEndian.PutUint32(t[15:], f.ScaledValueFirstSurface)
 	t[19] = 255 // type of second fixed surface = missing
 	t[20] = 0
@@ -586,4 +586,12 @@ func putI32SM(b []byte, v int32) {
 	} else {
 		binary.BigEndian.PutUint32(b, uint32(v))
 	}
+}
+
+func putI8SM(b []byte, v int8) {
+	if v < 0 {
+		b[0] = byte(-v) | 0x80
+		return
+	}
+	b[0] = byte(v)
 }

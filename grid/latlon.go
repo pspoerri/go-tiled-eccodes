@@ -28,6 +28,7 @@ import (
 //	53-56 Dj
 //	57    scanning mode
 type LatLon struct {
+	Earth       Earth
 	Ni, Nj      int
 	La1, Lo1    float64 // first point (degrees)
 	La2, Lo2    float64 // last point (degrees)
@@ -42,8 +43,9 @@ type LatLon struct {
 func ParseLatLon(t []byte) LatLon {
 	angleScale := angleScale(t)
 	g := LatLon{
-		Ni: int(bswap.U32(t, 16)),
-		Nj: int(bswap.U32(t, 20)),
+		Earth: ParseEarth(t),
+		Ni:    int(bswap.U32(t, 16)),
+		Nj:    int(bswap.U32(t, 20)),
 	}
 	g.La1 = float64(bswap.I32SM(t, 32)) / angleScale
 	g.Lo1 = float64(bswap.I32SM(t, 36)) / angleScale
@@ -103,6 +105,9 @@ func (g LatLon) Index(i, j int) int {
 	}
 	if !g.Consecutive {
 		// Data laid out column-major.
+		if g.Alternate && (si&1) == 1 {
+			sj = g.Nj - 1 - sj
+		}
 		return si*g.Nj + sj
 	}
 	if g.Alternate && (sj&1) == 1 {

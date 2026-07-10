@@ -14,4 +14,6 @@ var (
 	ErrShortBuffer         = errors.New("grib: destination buffer too small")
 	ErrNoData              = errors.New("grib: message has no decoded data")
 	ErrOutOfBounds         = errors.New("grib: coordinate outside grid")
+	ErrPredefinedBitmap    = errors.New("grib: predefined bitmap not configured")
+	ErrDecodeStarted       = errors.New("grib: decoding already started")
 )

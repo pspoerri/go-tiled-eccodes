@@ -26,6 +26,7 @@ import (
 type Polar struct {
 	rectScan
 	La1, Lo1     float64
+	Earth        Earth
 	LaD, LoV     float64
 	Dx, Dy       float64 // metres at LaD
 	NorthHem     bool    // true if north-polar projection
@@ -36,6 +37,7 @@ type Polar struct {
 
 func ParsePolar(t []byte) Polar {
 	g := Polar{}
+	g.Earth = ParseEarth(t)
 	g.Nx = int(bswap.U32(t, 16))
 	g.Ny = int(bswap.U32(t, 20))
 	g.La1 = float64(bswap.I32SM(t, 24)) / 1e6
@@ -52,7 +54,7 @@ func ParsePolar(t []byte) Polar {
 	// Stereographic scale: a point's distance from the pole is
 	// r(lat) = 2*R*K*tan((π/2 - |lat|)/2), with K such that Dx is the metric
 	// step at LaD. K = (1 + sin(|LaD|))/2 → r(lat) = R*(1 + sin|LaD|)*tan((π/2 - |lat|)/2)
-	g.scaleFromLaD = (1 + math.Sin(math.Abs(g.LaD)*deg2rad)) * earthRadiusMeters
+	g.scaleFromLaD = (1 + math.Sin(math.Abs(g.LaD)*deg2rad)) * g.Earth.EffectiveRadius()
 	x0, y0 := g.project(g.La1, g.Lo1)
 	g.xOrigin, g.yOrigin = x0, y0
 	return g

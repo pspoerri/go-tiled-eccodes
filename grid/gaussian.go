@@ -15,18 +15,21 @@ import (
 // and pole). Total number of latitudes = 2N. We compute them by Newton
 // iteration on the Legendre polynomial, then sort to descending order.
 type Gaussian struct {
-	N           int       // number of latitudes between equator and pole
-	Lats        []float64 // 2N Gaussian latitudes (descending: north → south)
-	Reduced     bool
-	Ni          int   // for regular grids, the row width
-	PL          []int // for reduced grids, points per row (len = Nj = 2N)
-	rowOffsets  []int // prefix sum of PL (len Nj+1)
-	totalPoints int
-	Lo1, Lo2    float64
-	IPositive   bool
-	JPositive   bool
-	Consecutive bool
-	Alternate   bool
+	N              int       // number of latitudes between equator and pole
+	Lats           []float64 // 2N Gaussian latitudes (descending: north → south)
+	Earth          Earth
+	Reduced        bool
+	Ni             int   // for regular grids, the row width
+	PL             []int // for reduced grids, points per row (len = Nj = 2N)
+	rowOffsets     []int // prefix sum of PL (len Nj+1)
+	storageOffsets []int // prefix sum in encoded scan order
+	totalPoints    int
+	La1, La2       float64
+	Lo1, Lo2, Di   float64
+	IPositive      bool
+	JPositive      bool
+	Consecutive    bool
+	Alternate      bool
 
 	// invLatBucket and latToRow form a uniform lat-bucket → row-index hash
 	// that replaces sort.Search in Locate. The bucket grid has nb = 4·Nj
@@ -45,11 +48,17 @@ type Gaussian struct {
 func ParseGaussian(s3template, optionalList []byte, listOctets int) Gaussian {
 	g := Gaussian{}
 	scale := angleScale(s3template)
+	g.Earth = ParseEarth(s3template)
 	rawNi := bswap.U32(s3template, 16)
 	nj := int(bswap.U32(s3template, 20))
 
+	g.La1 = float64(bswap.I32SM(s3template, 32)) / scale
 	g.Lo1 = float64(bswap.I32SM(s3template, 36)) / scale
+	g.La2 = float64(bswap.I32SM(s3template, 41)) / scale
 	g.Lo2 = float64(bswap.I32SM(s3template, 45)) / scale
+	if rawDi := bswap.U32(s3template, 49); rawDi != 0xffffffff {
+		g.Di = float64(rawDi) / scale
+	}
 	// N (number of parallels between equator and pole) sits at template byte
 	// 53 — same slot as Dj in template 3.0, since Gaussian latitudes are
 	// non-uniform and Dj is unused.
@@ -64,30 +73,32 @@ func ParseGaussian(s3template, optionalList []byte, listOctets int) Gaussian {
 	g.Consecutive = scan&0x20 == 0
 	g.Alternate = scan&0x10 != 0
 
-	g.Lats = gaussianLatitudes(g.N)
-	if !g.JPositive {
-		// natural order (N → S) matches our Lats ordering by default.
-	}
+	fullLatitudes := gaussianLatitudes(g.N)
+	g.Lats = gaussianSubset(fullLatitudes, nj, g.La1, g.La2)
 
+	var naturalWidths, storageWidths []int
 	if rawNi == 0xffffffff {
 		g.Reduced = true
-		g.PL = parsePL(optionalList, nj, listOctets)
+		storageWidths = parsePL(optionalList, nj, listOctets)
+		if g.JPositive {
+			g.PL = reversedInts(storageWidths)
+		} else {
+			g.PL = append([]int(nil), storageWidths...)
+		}
+		naturalWidths = g.PL
 	} else {
 		g.Ni = int(rawNi)
-		g.PL = nil
+		naturalWidths = make([]int, nj)
+		storageWidths = make([]int, nj)
+		for j := 0; j < nj; j++ {
+			naturalWidths[j] = g.Ni
+			storageWidths[j] = g.Ni
+		}
 	}
 
-	g.rowOffsets = make([]int, nj+1)
-	for j := 0; j < nj; j++ {
-		var w int
-		if g.Reduced {
-			w = g.PL[j]
-		} else {
-			w = g.Ni
-		}
-		g.rowOffsets[j+1] = g.rowOffsets[j] + w
-	}
-	g.totalPoints = g.rowOffsets[nj]
+	g.rowOffsets = prefixSums(naturalWidths)
+	g.storageOffsets = prefixSums(storageWidths)
+	g.totalPoints = g.storageOffsets[len(g.storageOffsets)-1]
 	g.buildLatRowHash()
 	return g
 }
@@ -199,22 +210,38 @@ func (g Gaussian) IsNatural() bool {
 
 func (g Gaussian) Index(i, j int) int {
 	nj := len(g.Lats)
-	if j < 0 || j >= nj {
+	if j < 0 || j >= nj || len(g.rowOffsets) != nj+1 || len(g.storageOffsets) != nj+1 {
 		return -1
 	}
 	rowW := g.rowOffsets[j+1] - g.rowOffsets[j]
 	if i < 0 || i >= rowW {
 		return -1
 	}
-	si := i
-	sj := j
+	if g.Reduced && !g.Consecutive {
+		return -1
+	}
+
+	si, sj := i, j
 	if !g.IPositive {
 		si = rowW - 1 - i
 	}
 	if g.JPositive {
 		sj = nj - 1 - j
 	}
-	return g.rowOffsets[sj] + si
+	if !g.Consecutive {
+		if g.Alternate && (si&1) == 1 {
+			sj = nj - 1 - sj
+		}
+		return si*nj + sj
+	}
+	storageW := g.storageOffsets[sj+1] - g.storageOffsets[sj]
+	if g.Alternate && (sj&1) == 1 {
+		si = storageW - 1 - si
+	}
+	if si < 0 || si >= storageW {
+		return -1
+	}
+	return g.storageOffsets[sj] + si
 }
 
 // Locate finds the source pixel for a geographic coordinate. For Gaussian
@@ -223,6 +250,9 @@ func (g Gaussian) Index(i, j int) int {
 // row span.
 func (g Gaussian) Locate(lat, lon float64) (float64, float64, bool) {
 	nj := len(g.Lats)
+	if nj == 0 {
+		return 0, 0, false
+	}
 	if lat > g.Lats[0]+1e-9 || lat < g.Lats[nj-1]-1e-9 {
 		return 0, 0, false
 	}
@@ -248,16 +278,31 @@ func (g Gaussian) Locate(lat, lon float64) (float64, float64, bool) {
 	if jRound >= nj {
 		jRound = nj - 1
 	}
-	rowW := g.rowOffsets[jRound+1] - g.rowOffsets[jRound]
-	di := 360.0 / float64(rowW)
-	west := g.Lo1
-	lonN := wrap360(lon, west)
-	fi := (lonN - west) / di
-	if fi < 0 {
-		fi += float64(rowW)
+	if len(g.rowOffsets) != nj+1 {
+		return 0, 0, false
 	}
-	if fi >= float64(rowW) {
-		fi -= float64(rowW)
+	rowW := g.rowOffsets[jRound+1] - g.rowOffsets[jRound]
+	west, east, di, global := g.longitudeLayout(rowW)
+	if rowW == 1 {
+		return 0, fj, math.Abs(wrap180(lon-west)) < 1e-9
+	}
+	if di <= 0 {
+		return 0, 0, false
+	}
+	lonN := wrap360(lon, west)
+	if !global && lonN > east+1e-9 {
+		return 0, 0, false
+	}
+	fi := (lonN - west) / di
+	if global {
+		if fi < 0 {
+			fi += float64(rowW)
+		}
+		if fi >= float64(rowW) {
+			fi -= float64(rowW)
+		}
+	} else if fi < -1e-9 || fi > float64(rowW-1)+1e-9 {
+		return 0, 0, false
 	}
 	return fi, fj, true
 }

@@ -1,13 +1,13 @@
 # go-tiled-ECCODES
 
 GRIB2 decoder built for one job: serving WGS84 (XYZ) tiles out of mmapped
-weather files at low latency. A drop-in replacement for the read side of
-ECMWF [eccodes](https://github.com/ecmwf/eccodes). The common packings
-(simple, complex, spatial differencing, IEEE float, PNG) and every grid
-type are pure Go; JPEG2000 (5.40) links `libopenjp2` via CGo behind a
-build tag; every other packing — including CCSDS (5.42), now a pure-Go
-port of libaec — is pure Go, so a pure-Go `go build` decodes everything
-except JPEG2000.
+weather files at low latency. It is a focused alternative to the read side
+of ECMWF [ecCodes](https://github.com/ecmwf/eccodes), not a drop-in
+replacement for ecCodes' full GRIB/BUFR and key-table surface. The supported
+grid-point packings and grids are pure Go; JPEG2000 (5.40) links
+`libopenjp2` via CGo behind a build tag. CCSDS (5.42) is a pure-Go port of
+libaec. Spherical-harmonic template 5.50 is decoded as coefficients, without
+performing spectral synthesis.
 
 ## Why
 
@@ -16,21 +16,21 @@ spectrum of meteorological I/O. A tile server only needs a slice of
 that: load a forecast grid once, project lat/lon → grid coordinates,
 resample 65k pixels into a 256² tile, encode, ship. Specializing for
 that path lets us keep the common case in pure Go (easier builds and
-cross-compilation) and lean on Go's concurrency model — a `*grib.File`
-is immutable after `Open`, so the same message can be rendered from
+cross-compilation) and lean on Go's concurrency model — after optional
+pre-decode setup, the same `*grib.File` can be rendered from
 many goroutines without locking. This library targets exactly that path:
 
 - **Static binary, single-file deployment by default.** Pure-Go `go build`
   produces a self-contained binary that runs anywhere Go runs, decoding
-  all packings except JPEG2000 (5.40) — CCSDS (5.42) is now a pure-Go
+  every supported packing except JPEG2000 (5.40) — CCSDS (5.42) is a pure-Go
   port of libaec and needs no system library. Only JPEG2000 delegates to
   `libopenjp2` via CGo; see *Optional packings* below.
 - **mmap by default.** The OS owns the page cache; you don't pay for
   reads on hot tiles. Decoded grids are cached per-message in a
   `sync.Once` so the first tile pays the decode cost once and every
   subsequent tile is pure resampling.
-- **Goroutine-safe by construction.** A `*grib.File` and its
-  `*grib.Message`s are immutable after `Open`; render N tiles
+- **Goroutine-safe by construction.** After optional one-time setup such as
+  predefined-bitmap registration, a `*grib.File` and its messages render N tiles
   concurrently from the same message with no locking on the decode path.
 - **Hot loop is allocation-free.** Tile working buffers (fx/fy and
   scratch float64) are pooled by size bucket. A 256² tile render
@@ -40,15 +40,21 @@ many goroutines without locking. This library targets exactly that path:
 
 - **GRIB2 reader** with mmap, lazy message indexing, and
   one-decode-per-message caching.
-- **Seven packing decoders**: simple (5.0), complex (5.2), complex +
+- **Nine packing decoders**: simple (5.0), complex (5.2), complex +
   spatial differencing (5.3), IEEE float (5.4), PNG (5.41), CCSDS (5.42,
-  pure-Go port of libaec) — all pure Go — plus JPEG2000 (5.40) via
-  libopenjp2 (CGo, behind a build tag).
-- **Seven grid types**: regular lat/lon (3.0), rotated lat/lon (3.1),
+  pure-Go port of libaec), logarithm-preprocessed simple packing (5.61),
+  and spectral simple packing (5.50) — all pure Go — plus JPEG2000 (5.40)
+  via libopenjp2 (CGo, behind a build tag).
+- **Ten tile-renderable grid types**: regular lat/lon (3.0), rotated
+  lat/lon (3.1),
   Mercator (3.10), polar stereographic (3.20), Lambert conformal
-  (3.30), Gaussian regular & reduced (3.40 with `pl[]` table), and
+  (3.30), Gaussian regular & reduced (3.40 with `pl[]` table), rotated
+  Gaussian regular & reduced (3.41), stretched Gaussian (3.42), stretched
+  and rotated Gaussian (3.43), and
   general unstructured / icosahedral (3.101) for ICON-style triangular
-  meshes. Gaussian latitudes are computed via Newton iteration on the
+  meshes. Spherical harmonics (3.50) expose metadata and coefficients but
+  are not tile-renderable without spectral synthesis. Gaussian latitudes
+  are computed via Newton iteration on the
   Legendre polynomial; unstructured grids use a balanced 3-D KD-tree
   over unit-sphere chord distance and accept a `MaxDistance` footprint
   cap to mask the area outside a regional model's domain.
@@ -67,8 +73,15 @@ many goroutines without locking. This library targets exactly that path:
 - **Single-point lookup** (`ValueAt`) shares the same decode cache
   and sampler — useful for "what's the temperature at this airport"
   endpoints alongside the tile API. ~88 ns warm.
-- **Bitmap (Section 6)** handling: missing values surface as `NaN`
-  in the float64 buffer and as `MissingValue` in integer outputs.
+- **Bitmap (Section 6)** handling: inline and reused bitmaps expand missing
+  values to `NaN`; centre-defined identifiers 1–253 can be registered before
+  decoding with `SetPredefinedBitmap`.
+- **ECMWF-oriented product metadata**: template-aware ensemble, derived,
+  probability, percentile and statistical-interval fields, valid-time
+  calculation, both fixed surfaces, Earth-shape metadata, and hybrid A/B
+  coordinate values from Section 4. `ParameterKey` exposes all WMO/local
+  lookup discriminators and `ParameterResolver` accepts application-supplied
+  ecCodes or centre-local concept tables.
 - **Two CLI tools** (`grib-inspect`, `grib-tile`) for smoke testing
   against real fixtures.
 - **Real-world validated.** Round-trip-tested against a live DWD
@@ -95,6 +108,8 @@ many goroutines without locking. This library targets exactly that path:
 | 5.40 | JPEG2000                                        | ✅ — via libopenjp2 (CGo) |
 | 5.41 | PNG                                             | ✅ |
 | 5.42 | CCSDS                                           | ✅ — pure Go (port of libaec) |
+| 5.50 | Spectral data — simple packing                  | ✅ coefficients; no spectral synthesis |
+| 5.61 | Simple packing with logarithm preprocessing     | ✅ |
 
 ### Grid Definition Templates (Section 3)
 | Template | Name | Status |
@@ -105,6 +120,10 @@ many goroutines without locking. This library targets exactly that path:
 | 3.20 | Polar stereographic                             | ✅ |
 | 3.30 | Lambert conformal                               | ✅ |
 | 3.40 | Gaussian — regular and reduced (pl[] table)     | ✅ |
+| 3.41 | Rotated Gaussian — regular and reduced          | ✅ |
+| 3.42 | Stretched Gaussian — regular and reduced        | ✅ |
+| 3.43 | Stretched and rotated Gaussian                  | ✅ |
+| 3.50 | Spherical harmonic coefficients                 | ⚠️ metadata/coefficients only; not tile-renderable |
 | 3.101 | General unstructured / icosahedral (ICON triangular mesh) | ✅ — coordinates injected via `LoadHorizontalConstants` |
 
 ## Install
@@ -113,9 +132,19 @@ many goroutines without locking. This library targets exactly that path:
 go get github.com/pspoerri/go-tiled-eccodes
 ```
 
-Requires Go 1.21+ and `golang.org/x/sys`. No other dependencies for the
+Requires the Go version declared in `go.mod` and `golang.org/x/sys`. No other dependencies for the
 default pure-Go build. To decode JPEG2000 (5.40) messages, see *Optional
 packings* below. CCSDS (5.42) is pure Go — no extra setup required.
+
+### Known limits
+
+| Area | Current limit |
+|---|---|
+| Complex spectral | Template 5.51 is not decoded |
+| Spectral rendering | Template 3.50/5.50 returns coefficients only; synthesis onto a geographic grid is not implemented |
+| Parameter tables | Pluggable resolver API is provided; ecCodes' evolving centre/local tables are not embedded |
+| ECMWF local Section 2 | Preserved as raw bytes; MARS/local-definition keys are not interpreted |
+| GRIB1 / BUFR | Out of scope; the indexer rejects non-GRIB2 input |
 
 ## Optional packings
 
@@ -430,9 +459,10 @@ within 1e-3 K of each other.
 
 ## Status
 
-All seven supported GRIB2 grid types (Section 3 templates 3.0, 3.1,
-3.10, 3.20, 3.30, 3.40, 3.101) and seven Section 5 packings (5.0, 5.2,
-5.3, 5.4, 5.40, 5.41, 5.42) decode end-to-end. ICON-D2 regular lat/lon
+Ten GRIB2 grid types are tile-renderable (Section 3 templates 3.0, 3.1,
+3.10, 3.20, 3.30, 3.40–3.43, 3.101), while 3.50 exposes spectral
+coefficients without synthesis. Nine Section 5 packings decode (5.0, 5.2,
+5.3, 5.4, 5.40, 5.41, 5.42, 5.50, 5.61). ICON-D2 regular lat/lon
 distributions round-trip within 1e-3 K across simple, complex, and
 spatial-differencing encodings of the same field.
 

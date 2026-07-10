@@ -27,6 +27,7 @@ import (
 type Mercator struct {
 	rectScan
 	La1, Lo1 float64
+	Earth    Earth
 	La2, Lo2 float64
 	LaD      float64
 	Di, Dj   float64 // metres at LaD
@@ -37,6 +38,7 @@ type Mercator struct {
 
 func ParseMercator(t []byte) Mercator {
 	g := Mercator{}
+	g.Earth = ParseEarth(t)
 	g.Nx = int(bswap.U32(t, 16))
 	g.Ny = int(bswap.U32(t, 20))
 	g.La1 = float64(bswap.I32SM(t, 24)) / 1e6
@@ -49,7 +51,7 @@ func ParseMercator(t []byte) Mercator {
 	g.Di = float64(int32(bswap.U32(t, 50))) * 1e-3
 	g.Dj = float64(int32(bswap.U32(t, 54))) * 1e-3
 
-	g.scaleR = earthRadiusMeters * math.Cos(g.LaD*deg2rad)
+	g.scaleR = g.Earth.EffectiveRadius() * math.Cos(g.LaD*deg2rad)
 	g.yOrigin = g.scaleR * math.Log(math.Tan(math.Pi/4+g.La1*deg2rad/2))
 	return g
 }

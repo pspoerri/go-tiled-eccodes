@@ -30,7 +30,7 @@ func Index(data []byte) ([]*Message, error) {
 		if err != nil {
 			return nil, fmt.Errorf("at offset %d: %w", off, err)
 		}
-		if int(total) > len(data)-off {
+		if total < section.Section0Size+4 || total > uint64(len(data)-off) {
 			return nil, fmt.Errorf("at offset %d: %w", off, ErrTruncated)
 		}
 		msgBytes := data[off : off+int(total)]
@@ -102,6 +102,9 @@ func splitMessage(msg []byte, s0 section.Section0, fileOff int) ([]*Message, err
 		}
 		num := msg[off+4]
 		raw := msg[off : off+int(ln)]
+		if !validSectionLength(num, len(raw)) {
+			return nil, fmt.Errorf("%w: section %d too short at %d", ErrBadSection, num, off)
+		}
 		switch num {
 		case 1:
 			cur.S1 = section.Section1{Raw: raw}
@@ -124,6 +127,9 @@ func splitMessage(msg []byte, s0 section.Section0, fileOff int) ([]*Message, err
 				cur.S6 = s6
 			}
 		case 7:
+			if len(cur.S1.Raw) == 0 || len(cur.S3.Raw) == 0 || len(cur.S4.Raw) == 0 || len(cur.S5.Raw) == 0 || len(cur.S6.Raw) == 0 {
+				return nil, fmt.Errorf("%w: missing mandatory section before section 7 at %d", ErrBadSection, off)
+			}
 			cur.S7 = section.Section7{Raw: raw}
 			// Section 7 closes one field. Materialise a Message whose lazy
 			// caches start fresh.
@@ -143,6 +149,9 @@ func splitMessage(msg []byte, s0 section.Section0, fileOff int) ([]*Message, err
 		}
 		off += int(ln)
 	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%w: message contains no data fields", ErrBadSection)
+	}
 	return out, nil
 }
 
@@ -159,4 +168,23 @@ type sectionBag struct {
 	S6      section.Section6
 	S7      section.Section7
 	fileOff int
+}
+
+func validSectionLength(number byte, length int) bool {
+	switch number {
+	case 1:
+		return length >= 21
+	case 2, 7:
+		return length >= 5
+	case 3:
+		return length >= 14
+	case 4:
+		return length >= 9
+	case 5:
+		return length >= 11
+	case 6:
+		return length >= 6
+	default:
+		return false
+	}
 }

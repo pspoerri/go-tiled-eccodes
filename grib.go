@@ -1,10 +1,10 @@
-// Package grib provides a pure-Go GRIB2 decoder optimized for serving WGS84
+// Package grib provides a GRIB2 decoder optimized for serving WGS84
 // tiles in a weather API. It assumes the source file is mmapped and exposes
 // zero-copy section parsers, typed buffer renderers (float32/float64 and
 // signed/unsigned 8/16/32/64-bit ints), and three sampling modes (nearest,
 // bicubic, mode).
 //
-// Scope: GRIB2 only. Decode only. See plan.md for the full design.
+// Scope: GRIB2 input only; the writer subpackage provides limited encoding.
 package grib
 
 import (
@@ -87,6 +87,12 @@ type Message struct {
 	once   sync.Once
 	cached []float64
 	decErr error
+
+	// Centre-defined bitmap (Section 6 indicator 1..253), supplied by the
+	// caller before the first decode.
+	bitmapMu         sync.Mutex
+	predefinedBitmap []byte
+	decodeStarted    bool
 
 	// Grid is parsed and cached once so callers can attach per-grid state
 	// (e.g. SetGridCoordinates on an unstructured grid) and have it persist

@@ -167,6 +167,12 @@ func TestSection4Accessors(t *testing.T) {
 		t.Errorf("short UnitOfTimeRange = %d, want 0", got)
 	}
 	if got := short.ForecastTime(); got != 0 {
+		if got := short.ParameterCategory(); got != 255 {
+			t.Errorf("short ParameterCategory = %d, want 255", got)
+		}
+		if got := short.ParameterNumber(); got != 255 {
+			t.Errorf("short ParameterNumber = %d, want 255", got)
+		}
 		t.Errorf("short ForecastTime = %d, want 0", got)
 	}
 	if got := short.TypeOfFirstFixedSurface(); got != 255 {
@@ -267,5 +273,73 @@ func TestSection7Accessors(t *testing.T) {
 	got := s.Payload()
 	if len(got) != 4 || got[0] != 1 || got[3] != 4 {
 		t.Errorf("Payload = %v, want [1 2 3 4]", got)
+	}
+}
+
+func TestSection4SignedValues(t *testing.T) {
+	raw := make([]byte, 37)
+	binary.BigEndian.PutUint16(raw[7:], 1)
+	binary.BigEndian.PutUint32(raw[18:], 0x80000001)
+	raw[23] = 0x82
+	s := Section4{Raw: raw}
+	if got := s.ForecastTime(); got != -1 {
+		t.Errorf("ForecastTime = %d, want -1", got)
+	}
+	if got := s.ScaleFactorOfFirstFixedSurface(); got != -2 {
+		t.Errorf("surface scale factor = %d, want -2", got)
+	}
+}
+
+func TestSection4EnsembleOffsets(t *testing.T) {
+	tests := []struct {
+		name     string
+		template uint16
+		offset   int
+		nbands   byte
+	}{
+		{name: "individual", template: 1, offset: 34},
+		{name: "interval", template: 11, offset: 34},
+		{name: "chemical", template: 41, offset: 36},
+		{name: "aerosol", template: 45, offset: 47},
+		{name: "satellite-two-bands", template: 33, offset: 45, nbands: 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := make([]byte, tc.offset+3)
+			binary.BigEndian.PutUint16(raw[7:], tc.template)
+			if tc.nbands != 0 {
+				raw[22] = tc.nbands
+			}
+			raw[tc.offset] = 3
+			raw[tc.offset+1] = 17
+			raw[tc.offset+2] = 51
+			s := Section4{Raw: raw}
+			if got := s.TypeOfEnsembleForecast(); got != 3 {
+				t.Errorf("type = %d, want 3", got)
+			}
+			if got := s.PerturbationNumber(); got != 17 {
+				t.Errorf("perturbation = %d, want 17", got)
+			}
+			if got := s.NumberOfForecastsInEnsemble(); got != 51 {
+				t.Errorf("ensemble size = %d, want 51", got)
+			}
+		})
+	}
+}
+
+func TestSection4DerivedForecastIsNotIndividualMember(t *testing.T) {
+	raw := make([]byte, 37)
+	binary.BigEndian.PutUint16(raw[7:], 2)
+	raw[34] = 4
+	raw[35] = 51
+	s := Section4{Raw: raw}
+	if got := s.TypeOfEnsembleForecast(); got != 255 {
+		t.Errorf("derived forecast ensemble type = %d, want 255", got)
+	}
+	if got := s.PerturbationNumber(); got != 0 {
+		t.Errorf("derived forecast perturbation = %d, want 0", got)
+	}
+	if got := s.NumberOfForecastsInEnsemble(); got != 0 {
+		t.Errorf("derived forecast ensemble size = %d, want 0", got)
 	}
 }

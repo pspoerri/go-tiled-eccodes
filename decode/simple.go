@@ -26,10 +26,17 @@ import (
 // a bitmap is present, callers must pass the count of set bits and use
 // ApplyBitmap to fan the values out.
 func Simple(template, data []byte, numPoints int, dst []float64) ([]float64, error) {
+	if len(template) < 10 || numPoints < 0 {
+		return nil, ErrBadComplexStream
+	}
 	r := bswap.F32(template, 0)
 	e := bswap.I16SM(template, 4)
 	d := bswap.I16SM(template, 6)
 	nbits := int(template[8])
+	if nbits > 32 ||
+		uint64(numPoints)*uint64(nbits) > uint64(len(data))*8 {
+		return nil, ErrBadComplexStream
+	}
 
 	scaleBin := math.Ldexp(1, int(e)) // 2^e, exact for representable e
 	scaleDec := math.Pow10(-int(d))   // 10^-d
