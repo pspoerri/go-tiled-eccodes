@@ -58,23 +58,32 @@ type TimeRange struct {
 }
 
 type pdtOffsets struct {
-	generating int
-	unit       int
-	forecast   int
-	surface    int
-	hasSurface bool
+	generating    int
+	unit          int
+	forecast      int
+	forecastWidth int
+	surface       int
+	hasSurface    bool
 }
 
 func (s Section4) commonOffsets() (pdtOffsets, bool) {
 	switch n := s.TemplateNumber(); {
 	case n <= 15, n == 60, n == 61:
-		return pdtOffsets{generating: 11, unit: 17, forecast: 18, surface: 22, hasSurface: true}, true
+		return pdtOffsets{generating: 11, unit: 17, forecast: 18, forecastWidth: 4, surface: 22, hasSurface: true}, true
 	case n >= 32 && n <= 34:
-		return pdtOffsets{generating: 11, unit: 17, forecast: 18}, true
+		return pdtOffsets{generating: 11, unit: 17, forecast: 18, forecastWidth: 4}, true
 	case n >= 40 && n <= 43:
-		return pdtOffsets{generating: 13, unit: 19, forecast: 20, surface: 24, hasSurface: true}, true
-	case n >= 44 && n <= 47:
-		return pdtOffsets{generating: 24, unit: 30, forecast: 31, surface: 35, hasSurface: true}, true
+		return pdtOffsets{generating: 13, unit: 19, forecast: 20, forecastWidth: 4, surface: 24, hasSurface: true}, true
+	case n == 44:
+		// Canonical PDT 4.44 uses a two-octet forecast time and begins
+		// its surface descriptors two octets earlier than the legacy form.
+		baseLength := len(s.Raw) - 4*int(s.NumCoords())
+		if baseLength == 45 {
+			return pdtOffsets{generating: 24, unit: 30, forecast: 31, forecastWidth: 2, surface: 33, hasSurface: true}, true
+		}
+		return pdtOffsets{generating: 24, unit: 30, forecast: 31, forecastWidth: 4, surface: 35, hasSurface: true}, true
+	case n >= 45 && n <= 47:
+		return pdtOffsets{generating: 24, unit: 30, forecast: 31, forecastWidth: 4, surface: 35, hasSurface: true}, true
 	}
 	return pdtOffsets{}, false
 }
@@ -87,8 +96,10 @@ func (s Section4) intervalOffsets() (end, count, missing, firstRange int, ok boo
 		return 47, 54, 55, 59, true
 	case 10:
 		return 35, 42, 43, 47, true
-	case 11, 61:
+	case 11:
 		return 37, 44, 45, 49, true
+	case 61:
+		return 44, 51, 52, 56, true
 	case 12:
 		return 36, 43, 44, 48, true
 	case 42:
@@ -134,7 +145,11 @@ func (s Section4) ProductDefinition() ProductDefinition {
 	if o, ok := s.commonOffsets(); ok {
 		p.TypeOfGeneratingProcess = byteAt(s.Raw, o.generating, 255)
 		p.UnitOfForecastTime = byteAt(s.Raw, o.unit, 0)
-		p.ForecastTime = i32SMAt(s.Raw, o.forecast)
+		if o.forecastWidth == 2 {
+			p.ForecastTime = int32(u16At(s.Raw, o.forecast, 0))
+		} else {
+			p.ForecastTime = i32SMAt(s.Raw, o.forecast)
+		}
 		if o.hasSurface {
 			p.TypeOfFirstFixedSurface = byteAt(s.Raw, o.surface, 255)
 			p.ScaleFactorFirstSurface = i8SMAt(s.Raw, o.surface+1)
@@ -245,6 +260,13 @@ func i32SMAt(b []byte, off int) int32 {
 		return 0
 	}
 	return bswap.I32SM(b, off)
+}
+
+func u16At(b []byte, off int, missing uint16) uint16 {
+	if off < 0 || off+2 > len(b) {
+		return missing
+	}
+	return bswap.U16(b, off)
 }
 
 func u32At(b []byte, off int, missing uint32) uint32 {

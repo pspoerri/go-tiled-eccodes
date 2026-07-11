@@ -86,6 +86,90 @@ func TestAerosolOffsetsAndProbability(t *testing.T) {
 	}
 }
 
+func TestTemplate61IntervalOffsets(t *testing.T) {
+	raw := make([]byte, 68)
+	binary.BigEndian.PutUint16(raw[7:], 61)
+	raw[17] = 1
+	binary.BigEndian.PutUint32(raw[18:], 6)
+
+	// Model-version timestamp inserted by PDT 4.61.
+	binary.BigEndian.PutUint16(raw[37:], 2025)
+	raw[39], raw[40], raw[41] = 6, 1, 0
+	raw[42], raw[43] = 0, 0
+
+	// End of the overall statistical interval.
+	binary.BigEndian.PutUint16(raw[44:], 2026)
+	raw[46], raw[47], raw[48] = 7, 10, 18
+	raw[49], raw[50] = 30, 0
+	raw[51] = 1
+	binary.BigEndian.PutUint32(raw[52:], 3)
+	raw[56], raw[57], raw[58] = 2, 1, 1
+	binary.BigEndian.PutUint32(raw[59:], 12)
+	raw[63] = 1
+	binary.BigEndian.PutUint32(raw[64:], 6)
+
+	s := Section4{Raw: raw}
+	p := s.ProductDefinition()
+	wantEnd := time.Date(2026, 7, 10, 18, 30, 0, 0, time.UTC)
+	if !p.HasEndOfOverallTimeInterval || !p.EndOfOverallTimeInterval.Equal(wantEnd) {
+		t.Errorf("end time = %v, want %v", p.EndOfOverallTimeInterval, wantEnd)
+	}
+	if p.NumberOfTimeRanges != 1 || p.NumberMissingInStatisticalProcess != 3 {
+		t.Errorf("interval metadata = ranges %d, missing %d",
+			p.NumberOfTimeRanges, p.NumberMissingInStatisticalProcess)
+	}
+	if !p.HasTimeRange || p.FirstTimeRange.StatisticalProcess != 2 ||
+		p.FirstTimeRange.Unit != 1 || p.FirstTimeRange.Length != 12 ||
+		p.FirstTimeRange.IncrementUnit != 1 || p.FirstTimeRange.Increment != 6 {
+		t.Errorf("first time range = %+v", p.FirstTimeRange)
+	}
+	all, ok := s.TimeRanges(nil)
+	if !ok || len(all) != 1 || all[0] != p.FirstTimeRange {
+		t.Errorf("TimeRanges = %+v ok=%v", all, ok)
+	}
+}
+
+func TestAerosolTemplate44CanonicalAndLegacy(t *testing.T) {
+	t.Run("canonical with coordinate value", func(t *testing.T) {
+		raw := make([]byte, 49)
+		binary.BigEndian.PutUint32(raw, uint32(len(raw)))
+		binary.BigEndian.PutUint16(raw[5:], 1)
+		binary.BigEndian.PutUint16(raw[7:], 44)
+		raw[24], raw[30] = 4, 1
+		binary.BigEndian.PutUint16(raw[31:], 12)
+		raw[33] = 103
+		binary.BigEndian.PutUint32(raw[35:], 2)
+		binary.BigEndian.PutUint32(raw[45:], math.Float32bits(1.25))
+
+		s := Section4{Raw: raw}
+		p := s.ProductDefinition()
+		if p.TypeOfGeneratingProcess != 4 || p.ForecastTime != 12 ||
+			p.TypeOfFirstFixedSurface != 103 || p.ScaledValueFirstSurface != 2 {
+			t.Errorf("canonical PDT 4.44 fields = %+v", p)
+		}
+		coords, err := s.CoordinateValues(nil)
+		if err != nil || len(coords) != 1 || coords[0] != 1.25 {
+			t.Errorf("CoordinateValues = %v err=%v", coords, err)
+		}
+	})
+
+	t.Run("legacy", func(t *testing.T) {
+		raw := make([]byte, 47)
+		binary.BigEndian.PutUint32(raw, uint32(len(raw)))
+		binary.BigEndian.PutUint16(raw[7:], 44)
+		raw[24], raw[30] = 4, 1
+		binary.BigEndian.PutUint32(raw[31:], 12)
+		raw[35] = 103
+		binary.BigEndian.PutUint32(raw[37:], 2)
+
+		p := (Section4{Raw: raw}).ProductDefinition()
+		if p.TypeOfGeneratingProcess != 4 || p.ForecastTime != 12 ||
+			p.TypeOfFirstFixedSurface != 103 || p.ScaledValueFirstSurface != 2 {
+			t.Errorf("legacy PDT 4.44 fields = %+v", p)
+		}
+	})
+}
+
 func TestCoordinateValuesRejectTruncation(t *testing.T) {
 	raw := make([]byte, 12)
 	binary.BigEndian.PutUint16(raw[5:], 2)

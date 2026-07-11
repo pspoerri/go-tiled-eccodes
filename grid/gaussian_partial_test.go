@@ -59,6 +59,19 @@ func TestPartialRegularGaussian(t *testing.T) {
 	}
 }
 
+func TestReducedGaussianCoarseGlobalLongitudes(t *testing.T) {
+	full := gaussianLatitudes(2)
+	template := gaussianTemplateForTest(
+		0xffffffff, 4, 2, full[0], 0, full[3], 270, 0, 0,
+	)
+	g := ParseGaussian(template, []byte{4, 4, 4, 4}, 1)
+
+	fi, _, ok := g.Locate(full[1], 315)
+	if !ok || math.Abs(fi-3.5) > 1e-9 {
+		t.Errorf("Locate longitude 315 = (%v,%v), want (3.5,true)", fi, ok)
+	}
+}
+
 func TestReducedGaussianJPositiveRows(t *testing.T) {
 	full := gaussianLatitudes(4)
 	template := gaussianTemplateForTest(0xffffffff, 4, 4, full[5], 0, full[2], 359, 0, 0x40)

@@ -65,6 +65,19 @@ func prefixSums(widths []int) []int {
 	return out
 }
 
+func (g Gaussian) maximumRowWidth() int {
+	if !g.Reduced {
+		return g.Ni
+	}
+	maxWidth := 0
+	for _, width := range g.PL {
+		if width > maxWidth {
+			maxWidth = width
+		}
+	}
+	return maxWidth
+}
+
 // longitudeLayout resolves a natural west-to-east row layout. Reduced global
 // grids omit Di, while regional Gaussian grids use Lo1/Lo2 and sometimes Di.
 func (g Gaussian) longitudeLayout(rowWidth int) (west, east, di float64, global bool) {
@@ -92,10 +105,15 @@ func (g Gaussian) longitudeLayout(rowWidth int) (west, east, di float64, global 
 	if rowWidth == 1 {
 		return west, west, 0, false
 	}
-	if span > 350 {
-		di = 360 / float64(rowWidth)
-		east = west + 360 - di
-		return west, east, di, true
+	maxWidth := g.maximumRowWidth()
+	if maxWidth > 1 {
+		nominal := 360 / float64(maxWidth)
+		tolerance := math.Max(1e-6, nominal*0.1)
+		if math.Abs(span+nominal-360) < tolerance {
+			di = 360 / float64(rowWidth)
+			east = west + 360 - di
+			return west, east, di, true
+		}
 	}
 	di = span / float64(rowWidth-1)
 	return west, east, di, false

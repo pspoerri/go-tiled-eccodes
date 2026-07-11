@@ -2,9 +2,11 @@ package decode
 
 import (
 	"bytes"
+	"encoding/binary"
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"testing"
 )
 
@@ -39,5 +41,68 @@ func TestPNGRGBAndRGBA(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPNGEcCodesContainerWidths(t *testing.T) {
+	t.Run("Gray8 with four bits per value", func(t *testing.T) {
+		img := image.NewGray(image.Rect(0, 0, 4, 1))
+		want := []float64{0, 1, 7, 15}
+		for i, value := range want {
+			img.SetGray(i, 0, color.Gray{Y: uint8(value)})
+		}
+		var encoded bytes.Buffer
+		if err := png.Encode(&encoded, img); err != nil {
+			t.Fatalf("encode PNG: %v", err)
+		}
+		template := make([]byte, 10)
+		template[8] = 4
+		got, err := PNG(template, encoded.Bytes(), len(want), nil)
+		if err != nil {
+			t.Fatalf("PNG: %v", err)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("value[%d] = %v, want %v", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("Gray16 with twelve bits per value", func(t *testing.T) {
+		img := image.NewGray16(image.Rect(0, 0, 3, 1))
+		want := []float64{0, 0x123, 0xabc}
+		for i, value := range want {
+			img.SetGray16(i, 0, color.Gray16{Y: uint16(value)})
+		}
+		var encoded bytes.Buffer
+		if err := png.Encode(&encoded, img); err != nil {
+			t.Fatalf("encode PNG: %v", err)
+		}
+		template := make([]byte, 10)
+		template[8] = 12
+		got, err := PNG(template, encoded.Bytes(), len(want), nil)
+		if err != nil {
+			t.Fatalf("PNG: %v", err)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("value[%d] = %v, want %v", i, got[i], want[i])
+			}
+		}
+	})
+}
+
+func TestPNGConstantFieldWithoutPayload(t *testing.T) {
+	template := make([]byte, 10)
+	binary.BigEndian.PutUint32(template, math.Float32bits(2.5))
+
+	got, err := PNG(template, nil, 3, nil)
+	if err != nil {
+		t.Fatalf("PNG: %v", err)
+	}
+	for i, value := range got {
+		if value != 2.5 {
+			t.Errorf("value[%d] = %v, want 2.5", i, value)
+		}
 	}
 }
